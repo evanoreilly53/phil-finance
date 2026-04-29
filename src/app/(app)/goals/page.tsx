@@ -31,6 +31,7 @@ export default async function GoalsPage() {
       outflows={outflows ?? []}
       currentNW={currentNW}
       monthlyNWDollars={monthlyNW.map(m => m.dollars)}
+      monthlyNWData={monthlyNW.map(m => ({ date: `${m.mk}-01`, nw: m.dollars }))}
       nowMs={nowMs}
     />
   )

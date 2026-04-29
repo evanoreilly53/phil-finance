@@ -1,9 +1,11 @@
 import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
-import { fmtAUD, fmtDate, perthMonthKey, addMonths, daysUntilPerth } from '@/lib/format'
+import { fmtAUD, fmtDate, perthMonthKey, addMonths, daysUntilPerth, monthKey, monthLabel } from '@/lib/format'
 import type { Route } from 'next'
 import AdviceCards, { type AdviceCard } from '@/components/AdviceCards'
 import { getSetting } from '@/lib/settings'
+import NWSparkline from './NWSparkline'
+import SpendingTrend from './SpendingTrend'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -14,6 +16,7 @@ export default async function DashboardPage() {
   const d30 = new Date(`${perthToday}T00:00:00`)
   d30.setDate(d30.getDate() + 30)
   const in30Days = `${d30.getFullYear()}-${String(d30.getMonth() + 1).padStart(2, '0')}-${String(d30.getDate()).padStart(2, '0')}`
+  const sixMonthsAgo = addMonths(thisMonth, -5)
 
   const [
     { data: snapshots },
@@ -24,6 +27,7 @@ export default async function DashboardPage() {
     { data: weddingItems },
     { data: investSnaps },
     { data: dueRecurring },
+    { data: sixMonthSpendTxs },
     MONTHLY_INCOME_CENTS,
     PERSONAL_BUDGET_CENTS,
     weddingBudgetCents,
@@ -44,6 +48,11 @@ export default async function DashboardPage() {
       .lte('next_due', perthToday)
       .order('next_due')
       .limit(5),
+    supabase.from('transactions')
+      .select('date, aud_amount_cents')
+      .lt('aud_amount_cents', 0)
+      .gte('date', `${sixMonthsAgo}-01`)
+      .lt('date', `${nextMonth}-01`),
     getSetting<number>('monthly_income_cents',  1256300),
     getSetting<number>('personal_budget_cents', 80000),
     getSetting<number>('wedding_budget_cents',  7500000),
@@ -63,6 +72,21 @@ export default async function DashboardPage() {
     .filter(([id]) => liquidIds.has(id))
     .reduce((s, [, v]) => s + v.cents, 0)
 
+  // Sparkline: last 6 NW snapshots — one total per unique date, most recent per account per date
+  const sparklinePoints: { date: string; total: number }[] = (() => {
+    const byDate = new Map<string, Map<string, { date: string; cents: number }>>()
+    for (const s of snapshots ?? []) {
+      if (!byDate.has(s.date)) byDate.set(s.date, new Map())
+      const accts = byDate.get(s.date)!
+      const prev = accts.get(s.account_id)
+      if (!prev || s.date >= prev.date) accts.set(s.account_id, { date: s.date, cents: s.aud_balance_cents })
+    }
+    return [...byDate.entries()]
+      .map(([date, accts]) => ({ date, total: [...accts.values()].reduce((sum, v) => sum + v.cents, 0) }))
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(-6)
+  })()
+
   // Spending
   const thisSpend   = (thisMonthTxs ?? []).reduce((s, t) => s + Math.abs(t.aud_amount_cents), 0)
   const prevSpend   = (prevMonthTxs ?? []).reduce((s, t) => s + Math.abs(t.aud_amount_cents), 0)
@@ -81,6 +105,25 @@ export default async function DashboardPage() {
   // Next payment
   const nextOutflow = (outflows ?? [])[0] ?? null
   const nextDays    = nextOutflow ? daysUntilPerth(nextOutflow.due_date) : null
+
+  // 6-month spending trend
+  const spendingTrendData = (() => {
+    const monthTotals = new Map<string, number>()
+    for (const t of sixMonthSpendTxs ?? []) {
+      const mk = monthKey(t.date)
+      monthTotals.set(mk, (monthTotals.get(mk) ?? 0) + Math.abs(t.aud_amount_cents))
+    }
+    // Build ordered 6 months from sixMonthsAgo to thisMonth
+    const result: { label: string; totalSpend: number }[] = []
+    for (let i = 0; i <= 5; i++) {
+      const mk = addMonths(sixMonthsAgo, i)
+      result.push({
+        label: monthLabel(mk, { month: 'short', year: '2-digit' }),
+        totalSpend: Math.round((monthTotals.get(mk) ?? 0) / 100),
+      })
+    }
+    return result
+  })()
 
   // 12.6 Cash-flow forecast: liquid balance − upcoming outflows in 30 days
   const upcoming30 = (outflows ?? []).filter(o => o.due_date >= perthToday && o.due_date <= in30Days)
@@ -183,6 +226,7 @@ export default async function DashboardPage() {
         <div className="bg-gray-900 rounded-2xl p-5 border border-gray-800 active:opacity-80">
           <p className="text-gray-400 text-sm">Total Net Worth</p>
           <p className="text-4xl font-bold text-white mt-1">{nw > 0 ? fmtAUD(nw) : '—'}</p>
+          <NWSparkline points={sparklinePoints} />
           <p className="text-gray-500 text-xs mt-1">tap to see breakdown →</p>
         </div>
       </Link>
@@ -191,10 +235,10 @@ export default async function DashboardPage() {
       {advice.length > 0 && <AdviceCards cards={advice} />}
 
       {/* Summary grid */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {summaryCards.map(({ label, sub, value, detail, colour, href }) => (
           <Link key={label} href={href}>
-            <div className="bg-gray-900 rounded-2xl p-4 border border-gray-800 active:opacity-80 h-full">
+            <div className="bg-gray-900 rounded-2xl p-4 border border-gray-800 active:opacity-80 h-full" style={{ minHeight: '120px' }}>
               <p className="text-gray-400 text-xs">{sub}</p>
               <p className="text-white font-semibold mt-1 text-lg leading-tight">{value}</p>
               {detail && <p className={`text-xs mt-1 ${colour}`}>{detail}</p>}
@@ -203,6 +247,9 @@ export default async function DashboardPage() {
           </Link>
         ))}
       </div>
+
+      {/* 6-Month Spending Trend */}
+      <SpendingTrend data={spendingTrendData} />
 
       {/* 12.6 Cash-flow forecast */}
       {liquidBal > 0 && (

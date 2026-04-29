@@ -133,6 +133,17 @@ export default function NetWorthView({ snapshots, accounts, goals }: Props) {
     : null
   const nwChange = prevNW !== null ? totalNW - prevNW : null
 
+  // Per-account deltas: balance at prev snapshot date vs latest
+  const prevDateStr = snapshotDates.length >= 2 ? snapshotDates[snapshotDates.length - 2] : null
+  const prevBalanceByAccount = useMemo(() => {
+    if (!prevDateStr) return new Map<string, number>()
+    const map = new Map<string, number>()
+    for (const s of snapshots) {
+      if (s.date === prevDateStr) map.set(s.account_id, s.aud_balance_cents)
+    }
+    return map
+  }, [snapshots, prevDateStr])
+
   // Stable lookups by kind
   const nwGoal = goals.find(g => g.kind === 'net_worth_milestone')
   const nwGoalProgress = nwGoal ? Math.min(100, (totalNW / nwGoal.target_cents) * 100) : null
@@ -226,6 +237,55 @@ export default function NetWorthView({ snapshots, accounts, goals }: Props) {
         </Card>
       )}
 
+      {/* Asset Mix strip */}
+      {latestBalances.length > 0 && (() => {
+        const typeColours: Record<string, string> = {
+          bank:       '#60a5fa',
+          savings:    '#34d399',
+          investment: '#818cf8',
+          super:      '#fbbf24',
+        }
+        const typeTotals = new Map<string, number>()
+        for (const { account: acc, snap } of latestBalances) {
+          const type = acc.type
+          typeTotals.set(type, (typeTotals.get(type) ?? 0) + snap.aud_balance_cents)
+        }
+        const entries = [...typeTotals.entries()].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1])
+        const total = entries.reduce((s, [, v]) => s + v, 0)
+        if (total === 0 || entries.length === 0) return null
+        const fallbackColours = ['#94a3b8', '#f472b6', '#fb923c', '#a78bfa']
+        return (
+          <Card className="space-y-3">
+            <p className="text-xs text-gray-500 uppercase tracking-wider">Asset Mix</p>
+            <div className="h-8 rounded-xl overflow-hidden flex gap-0.5">
+              {entries.map(([type, cents], i) => {
+                const colour = typeColours[type] ?? fallbackColours[i % fallbackColours.length]
+                const width  = (cents / total) * 100
+                return (
+                  <div
+                    key={type}
+                    style={{ width: `${width}%`, backgroundColor: colour }}
+                    className={i === 0 ? 'rounded-l-xl' : i === entries.length - 1 ? 'rounded-r-xl flex-1' : ''}
+                  />
+                )
+              })}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {entries.map(([type, cents], i) => {
+                const colour = typeColours[type] ?? fallbackColours[i % fallbackColours.length]
+                return (
+                  <span key={type} className="flex items-center gap-1.5 text-xs">
+                    <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: colour }} />
+                    <span className="text-gray-300 capitalize">{type}</span>
+                    <span className="text-gray-400 tabular-nums">{fmtAUD(cents, { full: true })}</span>
+                  </span>
+                )
+              })}
+            </div>
+          </Card>
+        )
+      })()}
+
       {/* Chart — lazy-loaded; includes 12-month dashed projection */}
       {chartData.length > 1 && (
         <Card padded={false} className="p-4">
@@ -259,24 +319,37 @@ export default function NetWorthView({ snapshots, accounts, goals }: Props) {
           <p className="text-sm font-semibold text-white">Account Balances</p>
         </div>
         <div className="divide-y divide-gray-800">
-          {latestBalances.map(({ account: acc, snap }) => (
-            <div key={acc.id} className="flex items-center justify-between px-4 py-3">
-              <div>
-                <p className="text-sm text-white">{acc.name}</p>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  {acc.type} · {acc.owner}
-                  {acc.currency !== 'AUD' && ` · ${acc.currency}`}
-                  {!acc.is_liquid && ' · illiquid'}
-                </p>
+          {latestBalances.map(({ account: acc, snap }) => {
+            const prevBal = prevBalanceByAccount.get(acc.id)
+            const delta   = prevBal !== undefined ? snap.aud_balance_cents - prevBal : null
+            return (
+              <div key={acc.id} className="flex items-center justify-between px-4 py-3">
+                <div>
+                  <p className="text-sm text-white">{acc.name}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {acc.type} · {acc.owner}
+                    {acc.currency !== 'AUD' && ` · ${acc.currency}`}
+                    {!acc.is_liquid && ' · illiquid'}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-medium text-white tabular-nums">{fmtAUD(snap.aud_balance_cents, { full: true })}</p>
+                  <div className="flex items-center justify-end gap-2 mt-0.5">
+                    <p className="text-xs text-gray-400">
+                      {fmtDate(snap.date, { day: 'numeric', month: 'short' })}
+                    </p>
+                    {delta !== null ? (
+                      <p className={`text-xs tabular-nums font-medium ${delta >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {delta >= 0 ? '+' : '-'}{fmtAUD(Math.abs(delta), { full: true })}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-gray-600">—</p>
+                    )}
+                  </div>
+                </div>
               </div>
-              <div className="text-right">
-                <p className="text-sm font-medium text-white tabular-nums">{fmtAUD(snap.aud_balance_cents, { full: true })}</p>
-                <p className="text-xs text-gray-400">
-                  {fmtDate(snap.date, { day: 'numeric', month: 'short' })}
-                </p>
-              </div>
-            </div>
-          ))}
+            )
+          })}
           {latestBalances.length === 0 && (
             <div className="px-4 py-6 text-center text-sm text-gray-500">No snapshots yet</div>
           )}

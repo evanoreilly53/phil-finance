@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { Plus, Download, Search, X, ChevronUp, ChevronDown, Undo2, EllipsisVertical, Upload } from 'lucide-react'
 import { deleteTransaction } from './actions'
 import AddTransactionModal from './AddTransactionModal'
+import SpendSummary from './SpendSummary'
 import { fmtAUD, fmtDate, monthKey, monthLabel } from '@/lib/format'
 import { OWNER_BADGE } from '@/lib/owners'
 import type { OwnerKey } from '@/lib/types'
@@ -182,6 +183,9 @@ export default function TransactionList({ transactions, categories, accounts, fr
 
   return (
     <div className="space-y-3 pb-4">
+      {/* Category spend summary */}
+      {transactions.length > 0 && <SpendSummary transactions={transactions} />}
+
       {/* Search */}
       <div className="relative">
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />

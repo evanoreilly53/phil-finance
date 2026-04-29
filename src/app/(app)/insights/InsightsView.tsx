@@ -268,6 +268,19 @@ export default function InsightsView({ transactions, snapshots, accounts, catego
       .reduce((s, t) => s + Math.abs(t.aud_amount_cents), 0),
   }), [transactions, currentMonth])
 
+  // ── Health Scorecard ─────────────────────────────────────────────────────────
+
+  const healthScore = useMemo(() => {
+    let score = 0
+    if (currentSavings.rate >= 20) score += 2
+    else if (currentSavings.rate >= 10) score += 1
+    if (rentRatio <= 30) score += 2
+    else if (rentRatio <= 40) score += 1
+    const allInvestChanges = investInfo.investAccounts.map(a => investInfo.changes[a.id].change)
+    if (investInfo.investAccounts.length > 0 && allInvestChanges.every(c => c !== null && c >= 0)) score += 1
+    return score
+  }, [currentSavings.rate, rentRatio, investInfo])
+
   // ── Render ────────────────────────────────────────────────────────────────────
 
   if (allMonths.length === 0) {
@@ -278,8 +291,26 @@ export default function InsightsView({ transactions, snapshots, accounts, catego
     )
   }
 
+  const scoreColour = healthScore >= 4 ? 'text-green-400' : healthScore >= 2 ? 'text-yellow-400' : 'text-red-400'
+  const dotFilled   = healthScore >= 4 ? 'bg-green-400' : healthScore >= 2 ? 'bg-yellow-400' : 'bg-red-400'
+
   return (
     <div className="space-y-4 pb-4">
+
+      {/* Financial Health Scorecard */}
+      <Card padded={false} className="px-4 py-3">
+        <div className="flex items-center justify-between">
+          <p className={`text-sm font-semibold ${scoreColour}`}>Financial Health: {healthScore}/5</p>
+          <div className="flex items-center gap-1.5">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div
+                key={i}
+                className={`w-3 h-3 rounded-full ${i < healthScore ? dotFilled : 'bg-gray-700'}`}
+              />
+            ))}
+          </div>
+        </div>
+      </Card>
 
       {/* Month nav */}
       <Card padded={false} className="flex items-center justify-between px-4 py-3">
@@ -304,6 +335,9 @@ export default function InsightsView({ transactions, snapshots, accounts, catego
           <ChevronRight size={20} />
         </button>
       </Card>
+
+      {/* ── Income & Savings ── */}
+      <p className="text-xs text-gray-500 uppercase tracking-wider px-1">💰 Income &amp; Savings</p>
 
       {/* ── Savings Rate ── */}
       <Card>
@@ -352,6 +386,9 @@ export default function InsightsView({ transactions, snapshots, accounts, catego
           </ResponsiveContainer>
         )}
       </Card>
+
+      {/* ── Housing ── */}
+      <p className="text-xs text-gray-500 uppercase tracking-wider px-1">🏠 Housing</p>
 
       {/* ── Rent-to-Income ── */}
       <Card className={rentAlert ? 'border-red-500/40' : ''}>
@@ -405,6 +442,9 @@ export default function InsightsView({ transactions, snapshots, accounts, catego
           </ResponsiveContainer>
         </Card>
       )}
+
+      {/* ── Investments ── */}
+      {investInfo.data.length > 0 && <p className="text-xs text-gray-500 uppercase tracking-wider px-1">📈 Investments</p>}
 
       {/* ── Investment Volatility ── */}
       {investInfo.data.length > 0 && (

@@ -156,6 +156,33 @@ export default function SpendingView({ transactions, categories }: Props) {
   const categoryTotals = useMemo(() => aggregateByParent(monthTxs, categories), [monthTxs, categories])
   const barData = useMemo(() => buildBarData(transactions, allMonths, excludeOneOff, activeOwner), [transactions, allMonths, excludeOneOff, activeOwner])
 
+  const prevCategoryTotals = useMemo(
+    () => aggregateByParent(prevMonthTxs, categories),
+    [prevMonthTxs, categories],
+  )
+
+  const momChanges = useMemo(() => {
+    if (!prevMonth || prevCategoryTotals.length === 0) return { increases: [], decreases: [] }
+    const prevMap = new Map(prevCategoryTotals.map(c => [c.name, c.cents]))
+    const currMap = new Map(categoryTotals.map(c => [c.name, c.cents]))
+
+    // All category names from both months
+    const allNames = new Set([...prevMap.keys(), ...currMap.keys()])
+    const changes: { name: string; delta: number; pct: number | null }[] = []
+
+    for (const name of allNames) {
+      const curr = currMap.get(name) ?? 0
+      const prev = prevMap.get(name) ?? 0
+      const delta = curr - prev
+      const pct   = prev > 0 ? (delta / prev) * 100 : null
+      changes.push({ name, delta, pct })
+    }
+
+    const increases = changes.filter(c => c.delta > 0).sort((a, b) => b.delta - a.delta).slice(0, 3)
+    const decreases = changes.filter(c => c.delta < 0).sort((a, b) => a.delta - b.delta).slice(0, 3)
+    return { increases, decreases }
+  }, [categoryTotals, prevCategoryTotals, prevMonth])
+
   // Personal spending split (always all months for Rachel/Evan widget)
   const rachelMonth = useMemo(() =>
     transactions.filter(t => monthKey(t.date) === currentMonth && t.owner === 'rachel')
@@ -313,6 +340,49 @@ export default function SpendingView({ transactions, categories }: Props) {
               <Bar dataKey="evan"   name="Evan"   fill="#60a5fa" radius={[2,2,0,0]} stackId="a" />
             </BarChart>
           </ResponsiveContainer>
+        </Card>
+      )}
+
+      {/* vs Last Month */}
+      {prevMonth && (momChanges.increases.length > 0 || momChanges.decreases.length > 0) && (
+        <Card>
+          <p className="text-sm font-semibold text-white mb-3">vs Last Month</p>
+          {momChanges.increases.length > 0 && (
+            <div className="mb-3">
+              <p className="text-xs text-gray-500 mb-2">Biggest increases</p>
+              <div className="space-y-1.5">
+                {momChanges.increases.map((c, i) => (
+                  <div key={i} className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-red-400 text-xs">↑</span>
+                      <span className="text-sm text-gray-300 truncate">{c.name}</span>
+                    </div>
+                    <span className="text-xs text-red-400 tabular-nums flex-shrink-0 ml-2">
+                      +{fmtAUD(c.delta)}{c.pct !== null ? ` (+${c.pct.toFixed(0)}%)` : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {momChanges.decreases.length > 0 && (
+            <div>
+              <p className="text-xs text-gray-500 mb-2">Biggest decreases</p>
+              <div className="space-y-1.5">
+                {momChanges.decreases.map((c, i) => (
+                  <div key={i} className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-green-400 text-xs">↓</span>
+                      <span className="text-sm text-gray-300 truncate">{c.name}</span>
+                    </div>
+                    <span className="text-xs text-green-400 tabular-nums flex-shrink-0 ml-2">
+                      {fmtAUD(c.delta)}{c.pct !== null ? ` (${c.pct.toFixed(0)}%)` : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </Card>
       )}
 

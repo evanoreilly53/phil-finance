@@ -1,7 +1,13 @@
 'use client'
 
 import { useState, useMemo } from 'react'
+import {
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend,
+  ComposedChart, Line,
+} from 'recharts'
 import { fmtAUD, fmtDate, monthKey, monthLabel } from '@/lib/format'
+import ChartTooltip from '@/components/ChartTooltip'
+import { Card } from '@/components/Card'
 import type { Transaction, Category, Account } from '../transactions/TransactionList'
 import type { OwnerKey } from '@/lib/types'
 
@@ -35,9 +41,82 @@ export default function IncomeView({ transactions, ytd, jointYtdCents, monthlyIn
   const totalFiltered = filtered.reduce((s, t) => s + t.aud_amount_cents, 0)
   const totalYtd = ytd.reduce((s, e) => s + e.ytdCents, 0) + jointYtdCents
 
+  const allMonthKeys6 = useMemo(() =>
+    [...new Set(transactions.map(t => monthKey(t.date)))].sort().reverse().slice(0, 6).reverse(),
+    [transactions],
+  )
+
+  const incomeBarData = useMemo(() => {
+    return allMonthKeys6.map(mk => {
+      const monthTxs = transactions.filter(t => monthKey(t.date) === mk && t.aud_amount_cents > 0)
+      return {
+        label: monthLabel(mk, { month: 'short', year: '2-digit' }),
+        Joint:  Math.round(monthTxs.filter(t => t.owner === 'joint').reduce((s, t) => s + t.aud_amount_cents, 0) / 100),
+        Rachel: Math.round(monthTxs.filter(t => t.owner === 'rachel').reduce((s, t) => s + t.aud_amount_cents, 0) / 100),
+        Evan:   Math.round(monthTxs.filter(t => t.owner === 'evan').reduce((s, t) => s + t.aud_amount_cents, 0) / 100),
+      }
+    })
+  }, [transactions, allMonthKeys6])
+
+  const incomeVsSpendData = useMemo(() => {
+    return allMonthKeys6.map(mk => {
+      const incomeCents  = transactions
+        .filter(t => monthKey(t.date) === mk && t.aud_amount_cents > 0)
+        .reduce((s, t) => s + t.aud_amount_cents, 0)
+      const spendCents   = transactions
+        .filter(t => monthKey(t.date) === mk && t.aud_amount_cents < 0)
+        .reduce((s, t) => s + Math.abs(t.aud_amount_cents), 0)
+      const income  = Math.round(incomeCents / 100)
+      const spending = Math.round(spendCents / 100)
+      return {
+        label: monthLabel(mk, { month: 'short', year: '2-digit' }),
+        income,
+        spending,
+        savings: income - spending,
+      }
+    })
+  }, [transactions, allMonthKeys6])
+
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-bold text-white">Income</h1>
+
+      {/* Monthly income bar chart */}
+      {incomeBarData.length > 0 && (
+        <Card padded={false} className="p-4">
+          <p className="text-sm font-semibold text-white mb-3">Monthly Income</p>
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={incomeBarData} margin={{ top: 0, right: 0, bottom: 0, left: -20 }}>
+              <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#6b7280' }} />
+              <YAxis tick={{ fontSize: 10, fill: '#6b7280' }} tickFormatter={v => '$' + (v >= 1000 ? Math.round(v / 1000) + 'k' : v)} />
+              <Tooltip content={<ChartTooltip />} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar dataKey="Joint"  name="Joint"  fill="#818cf8" radius={[2,2,0,0]} stackId="a" />
+              <Bar dataKey="Rachel" name="Rachel" fill="#f472b6" radius={[2,2,0,0]} stackId="a" />
+              <Bar dataKey="Evan"   name="Evan"   fill="#60a5fa" radius={[2,2,0,0]} stackId="a" />
+            </BarChart>
+          </ResponsiveContainer>
+        </Card>
+      )}
+
+      {/* Income vs. Spending chart */}
+      {incomeVsSpendData.length > 0 && (
+        <Card padded={false} className="p-4">
+          <p className="text-sm font-semibold text-white mb-3">Income vs. Spending</p>
+          <ResponsiveContainer width="100%" height={200}>
+            <ComposedChart data={incomeVsSpendData} margin={{ top: 4, right: 12, bottom: 0, left: -20 }}>
+              <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#6b7280' }} />
+              <YAxis yAxisId="left" tick={{ fontSize: 10, fill: '#6b7280' }} tickFormatter={v => '$' + (v >= 1000 ? Math.round(v / 1000) + 'k' : v)} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: '#60a5fa' }} tickFormatter={v => '$' + (v >= 1000 ? Math.round(v / 1000) + 'k' : v)} />
+              <Tooltip content={<ChartTooltip />} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar yAxisId="left" dataKey="income"   name="Income"   fill="#34d399" radius={[2, 2, 0, 0]} />
+              <Bar yAxisId="left" dataKey="spending" name="Spending" fill="#f87171" radius={[2, 2, 0, 0]} />
+              <Line yAxisId="right" type="monotone" dataKey="savings" name="Net Savings" stroke="#60a5fa" strokeWidth={2} dot={{ r: 3 }} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </Card>
+      )}
 
       {/* YTD summary cards */}
       <div className="grid grid-cols-2 gap-3">

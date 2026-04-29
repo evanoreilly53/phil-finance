@@ -1,9 +1,15 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import {
+  ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip,
+} from 'recharts'
 import { Heart, Plus, EllipsisVertical, AlertTriangle } from 'lucide-react'
 import { deleteWeddingItem } from './actions'
 import WeddingItemModal from './WeddingItemModal'
+import { Card } from '@/components/Card'
+
+const FALLBACK_COLOURS = ['#818cf8','#34d399','#f87171','#fbbf24','#60a5fa','#a78bfa','#f472b6','#fb923c']
 
 export type WeddingItem = {
   id: string
@@ -45,6 +51,19 @@ export default function WeddingView({ items, budget, eurToAud = 1.65 }: { items:
     document.addEventListener('click', close)
     return () => document.removeEventListener('click', close)
   }, [menuId])
+
+  const donutData = useMemo(() => {
+    const active = items
+      .filter(i => i.status !== 'cancelled' && (i.budget_aud_cents ?? 0) > 0)
+      .map(i => ({ name: i.item, value: i.budget_aud_cents ?? 0 }))
+      .sort((a, b) => b.value - a.value)
+
+    if (active.length <= 8) return active
+
+    const top7  = active.slice(0, 7)
+    const other = active.slice(7).reduce((s, i) => s + i.value, 0)
+    return [...top7, { name: 'Other', value: other }]
+  }, [items])
 
   const totalBudgetAud   = budget * 100
   const estimateTotalAud = items.reduce((s, i) => s + (i.budget_aud_cents ?? 0), 0)
@@ -148,6 +167,101 @@ export default function WeddingView({ items, budget, eurToAud = 1.65 }: { items:
           </div>
         </div>
       </div>
+
+      {/* Budget by Item donut */}
+      {donutData.length > 0 && (
+        <Card padded={false} className="p-4">
+          <p className="text-sm font-semibold text-white mb-3">Budget by Item</p>
+          <div className="flex gap-3 items-start">
+            <div className="w-40 h-40 flex-shrink-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={donutData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={40}
+                    outerRadius={68}
+                    dataKey="value"
+                    labelLine={false}
+                  >
+                    {donutData.map((_, i) => (
+                      <Cell key={i} fill={FALLBACK_COLOURS[i % FALLBACK_COLOURS.length]} />
+                    ))}
+                  </Pie>
+                  <ReTooltip
+                    content={({ active, payload }) => {
+                      if (!active || !payload?.length) return null
+                      const d = payload[0]
+                      return (
+                        <div className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-xs shadow-xl">
+                          <p className="text-white font-medium">{d.name}</p>
+                          <p className="text-gray-300">${((d.value as number) / 100).toLocaleString('en-AU', { maximumFractionDigits: 0 })}</p>
+                        </div>
+                      )
+                    }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="flex-1 space-y-1.5 overflow-hidden">
+              {donutData.map((d, i) => (
+                <div key={i} className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: FALLBACK_COLOURS[i % FALLBACK_COLOURS.length] }} />
+                    <span className="text-xs text-gray-300 truncate">{d.name}</span>
+                  </div>
+                  <span className="text-xs text-gray-400 tabular-nums flex-shrink-0">
+                    ${Math.round(d.value / 100).toLocaleString('en-AU')}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Payment Status strip */}
+      {(() => {
+        const paidAud    = items.filter(i => i.status === 'paid').reduce((s, i) => s + (i.budget_aud_cents ?? 0), 0)
+        const depositAud = items.filter(i => i.status === 'deposit_paid').reduce((s, i) => s + (i.budget_aud_cents ?? 0), 0)
+        const pendingAud = items.filter(i => i.status === 'pending').reduce((s, i) => s + (i.budget_aud_cents ?? 0), 0)
+        const stripTotal = paidAud + depositAud + pendingAud
+        if (stripTotal === 0) return null
+        return (
+          <div className="bg-gray-800/50 rounded-xl p-3">
+            <p className="text-xs text-gray-500 mb-2">Payment Status</p>
+            <div className="h-5 rounded-full overflow-hidden flex gap-0.5">
+              {paidAud > 0 && (
+                <div style={{ width: `${(paidAud / stripTotal) * 100}%` }} className="bg-emerald-400 rounded-l-full" />
+              )}
+              {depositAud > 0 && (
+                <div style={{ width: `${(depositAud / stripTotal) * 100}%` }} className="bg-yellow-400" />
+              )}
+              {pendingAud > 0 && (
+                <div style={{ width: `${(pendingAud / stripTotal) * 100}%` }} className="bg-gray-600 rounded-r-full flex-1" />
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2 mt-2">
+              <span className="flex items-center gap-1 text-xs">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />
+                <span className="text-gray-300">Paid</span>
+                <span className="text-gray-400">{fmtAUD(paidAud)}</span>
+              </span>
+              <span className="flex items-center gap-1 text-xs">
+                <span className="w-2 h-2 rounded-full bg-yellow-400 inline-block" />
+                <span className="text-gray-300">Deposit</span>
+                <span className="text-gray-400">{fmtAUD(depositAud)}</span>
+              </span>
+              <span className="flex items-center gap-1 text-xs">
+                <span className="w-2 h-2 rounded-full bg-gray-600 inline-block" />
+                <span className="text-gray-300">Pending</span>
+                <span className="text-gray-400">{fmtAUD(pendingAud)}</span>
+              </span>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Filter tabs */}
       <div className="flex bg-gray-900 border border-gray-700 rounded-xl overflow-hidden text-xs">

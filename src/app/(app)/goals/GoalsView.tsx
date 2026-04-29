@@ -1,8 +1,14 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import {
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip,
+  LineChart, Line, ReferenceLine,
+} from 'recharts'
 import { Target, CheckCircle2, Clock, Plus, EllipsisVertical } from 'lucide-react'
-import { fmtAUD, fmtCompact, fmtDate, daysUntilPerth } from '@/lib/format'
+import { fmtAUD, fmtCompact, fmtDate, daysUntilPerth, monthKey, monthLabel } from '@/lib/format'
+import ChartTooltip from '@/components/ChartTooltip'
+import { Card } from '@/components/Card'
 import { OWNER_TEXT } from '@/lib/owners'
 import { linearMonthlyGain, monthsToTarget } from '@/lib/forecast'
 import { deleteGoal, markOutflowPaid, deletePlannedOutflow, cancelPlannedOutflow } from './actions'
@@ -35,15 +41,51 @@ export type Outflow = {
 
 const GOAL_COLOURS = ['bg-indigo-500', 'bg-pink-500', 'bg-sky-500', 'bg-purple-500', 'bg-green-500']
 
+type MonthlyNWEntry = { date: string; nw: number }
+
+type TrajectoryPoint = { date: string; required: number | null; actual: number | null }
+
+function buildGoalTrajectory(
+  monthlyData: MonthlyNWEntry[],
+  goal: Goal,
+): TrajectoryPoint[] {
+  if (monthlyData.length < 2 || !goal.target_date) return []
+
+  const startDate  = monthlyData[0].date
+  const targetDate = goal.target_date
+  const targetNW   = goal.target_cents / 100
+
+  // Build a unified date range: historical dates + target date
+  const allDates = [...monthlyData.map(m => m.date)]
+  if (!allDates.includes(targetDate)) allDates.push(targetDate)
+  allDates.sort()
+
+  const startMs  = new Date(startDate).getTime()
+  const targetMs = new Date(targetDate).getTime()
+  const totalMs  = targetMs - startMs
+
+  const nwByDate = new Map(monthlyData.map(m => [m.date, m.nw]))
+  const startNW  = monthlyData[0].nw
+
+  return allDates.map(date => {
+    const dateMs = new Date(date).getTime()
+    const ratio  = totalMs > 0 ? Math.max(0, Math.min(1, (dateMs - startMs) / totalMs)) : 0
+    const required = Math.round(startNW + (targetNW - startNW) * ratio)
+    const actual   = nwByDate.has(date) ? nwByDate.get(date)! : null
+    return { date, required, actual }
+  })
+}
+
 type Props = {
   goals: Goal[]
   outflows: Outflow[]
   currentNW: number
   monthlyNWDollars?: number[]
+  monthlyNWData?: MonthlyNWEntry[]
   nowMs: number
 }
 
-export default function GoalsView({ goals, outflows, currentNW, monthlyNWDollars = [], nowMs }: Props) {
+export default function GoalsView({ goals, outflows, currentNW, monthlyNWDollars = [], monthlyNWData = [], nowMs }: Props) {
   const nwSlope = linearMonthlyGain(monthlyNWDollars)  // monthly gain in dollars
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Perth' }).format(new Date())
 
@@ -53,6 +95,26 @@ export default function GoalsView({ goals, outflows, currentNW, monthlyNWDollars
   const totalOutflowRemaining = upcoming
     .filter(o => o.status === 'planned')
     .reduce((s, o) => s + o.amount_cents, 0)
+
+  const paymentScheduleData = useMemo(() => {
+    const planned = outflows.filter(o => o.status === 'planned')
+    if (planned.length === 0) return []
+
+    // Collect months from planned outflows, next 6 months
+    const monthTotals = new Map<string, number>()
+    for (const o of planned) {
+      const mk = monthKey(o.due_date)
+      monthTotals.set(mk, (monthTotals.get(mk) ?? 0) + o.amount_cents)
+    }
+
+    return [...monthTotals.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(0, 6)
+      .map(([mk, cents]) => ({
+        label: monthLabel(mk, { month: 'short', year: '2-digit' }),
+        amount: Math.round(cents / 100),
+      }))
+  }, [outflows])
 
   const [showGoalModal, setShowGoalModal]       = useState(false)
   const [editingGoal,   setEditingGoal]         = useState<Goal | null>(null)
@@ -92,7 +154,7 @@ export default function GoalsView({ goals, outflows, currentNW, monthlyNWDollars
   return (
     <div className="space-y-4 pb-4">
       {/* Goals */}
-      <div className="space-y-3">
+      <div className="space-y-2">
         <div className="flex items-center justify-between px-1">
           <p className="text-xs text-gray-500 uppercase tracking-wider">Goals</p>
           <button onClick={() => setShowGoalModal(true)}
@@ -184,6 +246,61 @@ export default function GoalsView({ goals, outflows, currentNW, monthlyNWDollars
                   )}
                 </p>
               )}
+
+              {/* Trajectory chart for NW goals */}
+              {isNWGoal && (() => {
+                const trajectory = buildGoalTrajectory(monthlyNWData, goal)
+                if (trajectory.length < 2) return null
+                const todayStr  = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Perth' }).format(new Date())
+                const isOnTrack = onTrack === 'green'
+                return (
+                  <div className="mt-3">
+                    <ResponsiveContainer width="100%" height={120}>
+                      <LineChart data={trajectory} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
+                        <XAxis
+                          dataKey="date"
+                          tick={{ fontSize: 9, fill: '#6b7280' }}
+                          tickFormatter={d => {
+                            const dt = new Date(d + 'T00:00:00')
+                            return dt.toLocaleDateString('en-AU', { month: 'short', year: '2-digit' })
+                          }}
+                          interval="preserveStartEnd"
+                        />
+                        <YAxis
+                          tick={{ fontSize: 9, fill: '#6b7280' }}
+                          tickFormatter={v => '$' + (v >= 1000 ? Math.round(v / 1000) + 'k' : v)}
+                        />
+                        <Tooltip content={<ChartTooltip />} />
+                        <ReferenceLine
+                          x={todayStr}
+                          stroke="#facc15"
+                          strokeDasharray="4 4"
+                          label={{ value: 'Today', position: 'insideTopRight', fontSize: 9, fill: '#facc15' }}
+                        />
+                        <Line
+                          type="linear"
+                          dataKey="required"
+                          name="Required"
+                          stroke="#4b5563"
+                          strokeDasharray="4 4"
+                          strokeWidth={1.5}
+                          dot={false}
+                          connectNulls
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="actual"
+                          name="Actual"
+                          stroke={isOnTrack ? '#34d399' : '#f87171'}
+                          strokeWidth={2}
+                          dot={{ r: 2 }}
+                          connectNulls
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                )
+              })()}
             </div>
           )
         })}
@@ -209,6 +326,20 @@ export default function GoalsView({ goals, outflows, currentNW, monthlyNWDollars
             </button>
           </div>
         </div>
+
+        {paymentScheduleData.length > 0 && (
+          <Card padded={false} className="p-4">
+            <p className="text-sm font-semibold text-white mb-3">Payment Schedule</p>
+            <ResponsiveContainer width="100%" height={120}>
+              <BarChart data={paymentScheduleData} margin={{ top: 0, right: 0, bottom: 0, left: -20 }}>
+                <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#6b7280' }} />
+                <YAxis tick={{ fontSize: 10, fill: '#6b7280' }} tickFormatter={v => '$' + (v >= 1000 ? Math.round(v / 1000) + 'k' : v)} />
+                <Tooltip content={<ChartTooltip />} />
+                <Bar dataKey="amount" name="Due" fill="#fbbf24" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </Card>
+        )}
 
         {upcoming.length === 0 ? (
           <div className="bg-gray-900 rounded-2xl border border-gray-800 p-6 text-center text-sm text-gray-500">
