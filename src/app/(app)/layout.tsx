@@ -14,7 +14,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       </a>
       <TopBar />
       <main id="main" className="flex-1 overflow-y-auto pb-20 pt-14">
-        <div className="max-w-4xl mx-auto px-4 py-4">
+        <div className="max-w-6xl mx-auto px-4 py-4">
           {children}
         </div>
       </main>

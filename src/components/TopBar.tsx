@@ -25,7 +25,7 @@ export default function TopBar() {
 
   return (
     <header className="fixed top-0 left-0 right-0 z-40 bg-gray-950 border-b border-gray-800 h-14 flex items-center px-4">
-      <div className="max-w-4xl mx-auto w-full flex items-center justify-between">
+      <div className="max-w-6xl mx-auto w-full flex items-center justify-between">
         <h1 className="text-white font-semibold text-lg">{title}</h1>
 
         <div className="relative">
