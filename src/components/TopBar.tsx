@@ -20,7 +20,7 @@ const titles: Record<string, string> = {
 
 export default function TopBar() {
   const pathname = usePathname()
-  const title    = titles[pathname] ?? 'Phil Finance'
+  const title    = titles[pathname] ?? 'Bun & Chump'
   const [menuOpen, setMenuOpen] = useState(false)
 
   return (
@@ -36,7 +36,7 @@ export default function TopBar() {
             aria-label="App menu"
             className="flex items-center gap-1 text-xs text-gray-400 hover:text-white transition-colors font-mono"
           >
-            Phil Finance
+            Bun & Chump
             <ChevronDown size={12} className={`transition-transform ${menuOpen ? 'rotate-180' : ''}`} />
           </button>
 

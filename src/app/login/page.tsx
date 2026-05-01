@@ -10,7 +10,8 @@ export default function LoginPage() {
     <div className="min-h-screen bg-gray-950 flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white">Phil Finance</h1>
+          <img src="/logo.png" alt="Bun & Chump" className="w-28 h-28 mx-auto mb-4 rounded-2xl object-contain" />
+          <h1 className="text-3xl font-bold text-white">Bun & Chump</h1>
           <p className="text-gray-400 mt-2 text-sm">Household HQ</p>
         </div>
 

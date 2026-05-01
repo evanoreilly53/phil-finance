@@ -13,8 +13,12 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Phil Finance",
+  title: "Bun & Chump",
   description: "Household finance & planning",
+  icons: {
+    icon: '/icon-192.png',
+    apple: '/apple-icon.png',
+  },
 };
 
 export const viewport: Viewport = {

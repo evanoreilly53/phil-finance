@@ -45,7 +45,7 @@ export default function InstallPrompt() {
       <Download size={18} className="text-indigo-400 flex-shrink-0" />
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-white">Add to Home Screen</p>
-        <p className="text-xs text-gray-400 mt-0.5">Install Phil Finance for quick access</p>
+        <p className="text-xs text-gray-400 mt-0.5">Install Bun & Chump for quick access</p>
       </div>
       <button onClick={install} className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg font-medium transition-colors flex-shrink-0">
         Install

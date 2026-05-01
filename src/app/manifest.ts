@@ -2,8 +2,8 @@ import type { MetadataRoute } from 'next'
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'Phil Finance',
-    short_name: 'Phil',
+    name: 'Bun & Chump',
+    short_name: 'Bun & Chump',
     description: 'Personal finance tracker for Evan & Rachel',
     start_url: '/dashboard',
     display: 'standalone',
@@ -11,8 +11,8 @@ export default function manifest(): MetadataRoute.Manifest {
     theme_color: '#030712',
     orientation: 'portrait',
     icons: [
-      { src: '/favicon.ico', sizes: 'any', type: 'image/x-icon' },
-      // Replace with icon-192.png + icon-512.png in public/ for full PWA install support
+      { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
     ],
     categories: ['finance', 'productivity'],
   }
