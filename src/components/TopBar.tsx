@@ -25,7 +25,7 @@ export default function TopBar() {
 
   return (
     <header className="fixed top-0 left-0 right-0 z-40 bg-gray-950 border-b border-gray-800 h-14 flex items-center px-4">
-      <div className="max-w-2xl mx-auto w-full flex items-center justify-between">
+      <div className="max-w-4xl mx-auto w-full flex items-center justify-between">
         <h1 className="text-white font-semibold text-lg">{title}</h1>
 
         <div className="relative">
@@ -34,8 +34,9 @@ export default function TopBar() {
             aria-expanded={menuOpen}
             aria-haspopup="menu"
             aria-label="App menu"
-            className="flex items-center gap-1 text-xs text-gray-400 hover:text-white transition-colors font-mono"
+            className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-white transition-colors font-mono"
           >
+            <img src="/logo.png" alt="" className="w-6 h-6 rounded-full object-cover flex-shrink-0" aria-hidden="true" />
             Bun & Chump
             <ChevronDown size={12} className={`transition-transform ${menuOpen ? 'rotate-180' : ''}`} />
           </button>

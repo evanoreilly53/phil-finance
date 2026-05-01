@@ -15,7 +15,7 @@ export default function NWSparkline({ points }: Props) {
 
   return (
     <div className="mt-2 mb-1" aria-hidden="true">
-      <ResponsiveContainer width="100%" height={48}>
+      <ResponsiveContainer width="100%" height={72}>
         <LineChart data={points} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
           <Line
             type="monotone"
