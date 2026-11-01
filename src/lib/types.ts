@@ -1,6 +1,6 @@
 export type OwnerKey = 'joint' | 'rachel' | 'evan'
 export type OwnerKeyAny = OwnerKey | 'any'
-export type AccountType = 'bank' | 'investment' | 'super' | 'savings' | 'wedding'
+export type { AccountType } from './supabase/database.types'
 export type Currency = 'AUD' | 'EUR' | 'USD' | 'GBP'
 export type Cents = number & { readonly __brand: 'Cents' }
 export function asCents(n: number): Cents { return n as Cents }
