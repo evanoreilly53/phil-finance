@@ -10,6 +10,8 @@ import { fmtAUD, monthKey, monthLabel, perthMonthKey } from '@/lib/format'
 import ChartTooltip from '@/components/ChartTooltip'
 import { Card } from '@/components/Card'
 import type { OwnerKey } from '@/lib/types'
+import { resolveParentName, isCategoryOrChildOf } from '@/lib/categories'
+import { monthlyNetWorth } from '@/lib/balances'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -40,6 +42,7 @@ type Account = {
   id: string
   name: string
   type: string
+  is_active?: boolean | null
 }
 
 type Category = {
@@ -57,13 +60,6 @@ type Props = {
   categories: Category[]
   monthlyIncomeCents: number
   personalBudgetCents: number
-}
-
-function resolveParentName(catId: string | null, joined: TxCat, allCats: Category[]): string {
-  if (!catId || !joined) return 'Uncategorised'
-  if (!joined.parent_id) return joined.name
-  const parent = allCats.find(c => c.id === joined.parent_id)
-  return parent?.name ?? joined.name
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -111,7 +107,8 @@ export default function InsightsView({ transactions, snapshots, accounts, catego
   const rentCents = useMemo(() => {
     return transactions
       .filter(t => monthKey(t.date) === currentMonth)
-      .filter(t => resolveParentName(t.category_id, t.categories, categories) === 'Rent')
+      // 'Rent' is a child of 'Housing/Utilities', so match the category itself or its parent
+      .filter(t => isCategoryOrChildOf(t.categories, categories, 'Rent'))
       .reduce((s, t) => s + Math.abs(t.aud_amount_cents), 0)
   }, [transactions, currentMonth, categories])
 
@@ -221,26 +218,22 @@ export default function InsightsView({ transactions, snapshots, accounts, catego
 
   // 12.10 Reconciliation: flag months where actual NW change ≠ income−expenses by >$500
   const reconciliation = useMemo(() => {
-    // Build monthly NW totals: group snapshots by month, sum latest-per-account
-    const byMonth = new Map<string, Map<string, { date: string; cents: number }>>()
-    for (const s of snapshots) {
-      const mk = monthKey(s.date)
-      if (!byMonth.has(mk)) byMonth.set(mk, new Map())
-      const accts = byMonth.get(mk)!
-      const prev  = accts.get(s.account_id)
-      if (!prev || s.date > prev.date) accts.set(s.account_id, { date: s.date, cents: s.aud_balance_cents })
-    }
-    const monthTotals = new Map([...byMonth.entries()].map(([mk, accts]) => [
-      mk,
-      [...accts.values()].reduce((s, v) => s + v.cents, 0),
-    ]))
+    // Month-end NW per month (active accounts, balances carried forward)
+    const activeIds = new Set(accounts.filter(a => a.is_active !== false).map(a => a.id))
+    const monthTotals = new Map(
+      monthlyNetWorth(snapshots, { accountIds: activeIds }).map(m => [m.mk, m.cents] as const),
+    )
 
     const sortedMK = [...monthTotals.keys()].sort()
+    // Only judge a month when both it and the month before were actually snapshotted
+    // (gap months are carried forward, so their "change" would be meaningless).
+    const snappedMonths = new Set(snapshots.map(s => monthKey(s.date)))
     const results: { month: string; discrepancyCents: number }[] = []
 
     for (let i = 1; i < sortedMK.length; i++) {
       const mk    = sortedMK[i]
       const prevMK = sortedMK[i - 1]
+      if (!snappedMonths.has(mk) || !snappedMonths.has(prevMK)) continue
       const endNW  = monthTotals.get(mk)!
       const startNW = monthTotals.get(prevMK)!
       const actualChange = endNW - startNW
@@ -257,7 +250,7 @@ export default function InsightsView({ transactions, snapshots, accounts, catego
       }
     }
     return results
-  }, [snapshots, transactions, MONTHLY_INCOME_CENTS])
+  }, [snapshots, accounts, transactions, MONTHLY_INCOME_CENTS])
 
   const personalSpending = useMemo(() => ({
     rachel: transactions

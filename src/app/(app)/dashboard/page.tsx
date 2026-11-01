@@ -4,6 +4,8 @@ import { fmtAUD, fmtDate, perthMonthKey, addMonths, daysUntilPerth, monthKey, mo
 import type { Route } from 'next'
 import AdviceCards, { type AdviceCard } from '@/components/AdviceCards'
 import { getSetting } from '@/lib/settings'
+import { fetchAll } from '@/lib/supabase/fetchAll'
+import { latestBalanceByAccount, currentNetWorthCents, netWorthSeries, accountDeltas } from '@/lib/balances'
 import NWSparkline from './NWSparkline'
 import SpendingTrend from './SpendingTrend'
 
@@ -19,40 +21,45 @@ export default async function DashboardPage() {
   const sixMonthsAgo = addMonths(thisMonth, -5)
 
   const [
-    { data: snapshots },
+    snapshots,
     { data: accounts },
-    { data: thisMonthTxs },
-    { data: prevMonthTxs },
+    thisMonthTxs,
+    prevMonthTxs,
     { data: outflows },
     { data: weddingItems },
-    { data: investSnaps },
     { data: dueRecurring },
-    { data: sixMonthSpendTxs },
+    sixMonthSpendTxs,
+    { data: outflowsNext30 },
     MONTHLY_INCOME_CENTS,
     PERSONAL_BUDGET_CENTS,
     weddingBudgetCents,
   ] = await Promise.all([
-    supabase.from('account_snapshots').select('account_id, aud_balance_cents, date').order('date', { ascending: false }),
+    fetchAll((from, to) => supabase.from('account_snapshots').select('account_id, aud_balance_cents, date')
+      .order('date', { ascending: true }).order('id', { ascending: true }).range(from, to)),
     supabase.from('accounts').select('id, is_liquid, type').eq('is_active', true),
-    supabase.from('transactions').select('aud_amount_cents, owner').lt('aud_amount_cents', 0).gte('date', `${thisMonth}-01`).lt('date', `${nextMonth}-01`),
-    supabase.from('transactions').select('aud_amount_cents').lt('aud_amount_cents', 0).gte('date', `${prevMonth}-01`).lt('date', `${thisMonth}-01`),
+    fetchAll((from, to) => supabase.from('transactions').select('aud_amount_cents, owner').lt('aud_amount_cents', 0)
+      .gte('date', `${thisMonth}-01`).lt('date', `${nextMonth}-01`).order('id').range(from, to)),
+    fetchAll((from, to) => supabase.from('transactions').select('aud_amount_cents').lt('aud_amount_cents', 0)
+      .gte('date', `${prevMonth}-01`).lt('date', `${thisMonth}-01`).order('id').range(from, to)),
     supabase.from('planned_outflows').select('description, amount_cents, due_date, status').eq('status', 'planned').order('due_date').limit(5),
     supabase.from('wedding_items').select('budget_aud_cents, spent_aud_cents, status'),
-    supabase.from('account_snapshots')
-      .select('account_id, aud_balance_cents, date')
-      .order('date', { ascending: false })
-      .limit(50),
     supabase.from('recurring_transactions')
       .select('id, description, amount_cents, next_due')
       .eq('is_active', true)
       .lte('next_due', perthToday)
       .order('next_due')
       .limit(5),
-    supabase.from('transactions')
+    fetchAll((from, to) => supabase.from('transactions')
       .select('date, aud_amount_cents')
       .lt('aud_amount_cents', 0)
       .gte('date', `${sixMonthsAgo}-01`)
-      .lt('date', `${nextMonth}-01`),
+      .lt('date', `${nextMonth}-01`)
+      .order('id')
+      .range(from, to)),
+    // All planned outflows due in the next 30 days (the list above is capped at 5
+    // and includes overdue items, so it can't be used for the 30-day total)
+    supabase.from('planned_outflows').select('amount_cents').eq('status', 'planned')
+      .gte('due_date', perthToday).lte('due_date', in30Days),
     getSetting<number>('monthly_income_cents',  1256300),
     getSetting<number>('personal_budget_cents', 80000),
     getSetting<number>('wedding_budget_cents',  7500000),
@@ -61,31 +68,19 @@ export default async function DashboardPage() {
   // Net worth
   const liquidIds  = new Set((accounts ?? []).filter(a => a.is_liquid).map(a => a.id))
   const investIds  = new Set((accounts ?? []).filter(a => a.type === 'investment').map(a => a.id))
-  const latestByAccount: Record<string, { cents: number; date: string }> = {}
-  for (const s of snapshots ?? []) {
-    if (!latestByAccount[s.account_id] || s.date > latestByAccount[s.account_id].date) {
-      latestByAccount[s.account_id] = { cents: s.aud_balance_cents, date: s.date }
-    }
-  }
-  const nw          = Object.values(latestByAccount).reduce((s, v) => s + v.cents, 0)
-  const liquidBal   = Object.entries(latestByAccount)
+  // Same basis as the Net Worth page: active accounts, last known balance carried forward
+  const activeIds   = new Set((accounts ?? []).map(a => a.id))
+  const latestByAccount = latestBalanceByAccount(snapshots, { accountIds: activeIds })
+  const nw          = currentNetWorthCents(snapshots, { accountIds: activeIds })
+  const liquidBal   = [...latestByAccount.entries()]
     .filter(([id]) => liquidIds.has(id))
     .reduce((s, [, v]) => s + v.cents, 0)
 
-  // Sparkline: last 6 NW snapshots — one total per unique date, most recent per account per date
-  const sparklinePoints: { date: string; total: number }[] = (() => {
-    const byDate = new Map<string, Map<string, { date: string; cents: number }>>()
-    for (const s of snapshots ?? []) {
-      if (!byDate.has(s.date)) byDate.set(s.date, new Map())
-      const accts = byDate.get(s.date)!
-      const prev = accts.get(s.account_id)
-      if (!prev || s.date >= prev.date) accts.set(s.account_id, { date: s.date, cents: s.aud_balance_cents })
-    }
-    return [...byDate.entries()]
-      .map(([date, accts]) => ({ date, total: [...accts.values()].reduce((sum, v) => sum + v.cents, 0) }))
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .slice(-6)
-  })()
+  // Sparkline: last 6 snapshot dates, each with every account carried forward
+  const sparklinePoints: { date: string; total: number }[] = netWorthSeries(snapshots, { accountIds: activeIds })
+    .slice(-6)
+    .map(p => ({ date: p.date, total: p.totalCents }))
+  const deltasByAccount = accountDeltas(snapshots, { accountIds: investIds })
 
   // Spending
   const thisSpend   = (thisMonthTxs ?? []).reduce((s, t) => s + Math.abs(t.aud_amount_cents), 0)
@@ -126,7 +121,7 @@ export default async function DashboardPage() {
   })()
 
   // 12.6 Cash-flow forecast: liquid balance − upcoming outflows in 30 days
-  const upcoming30 = (outflows ?? []).filter(o => o.due_date >= perthToday && o.due_date <= in30Days)
+  const upcoming30 = outflowsNext30 ?? []
   const outflow30Total = upcoming30.reduce((s, o) => s + o.amount_cents, 0)
   const projectedLiquid = liquidBal - outflow30Total
 
@@ -167,11 +162,11 @@ export default async function DashboardPage() {
   }
   // Investment performance advice
   for (const id of investIds) {
-    const snaps = (investSnaps ?? []).filter(s => s.account_id === id).sort((a, b) => a.date.localeCompare(b.date))
-    const last  = snaps[snaps.length - 1]
-    const prev  = snaps[snaps.length - 2]
-    if (last && prev && prev.aud_balance_cents > 0) {
-      const chg = ((last.aud_balance_cents - prev.aud_balance_cents) / prev.aud_balance_cents) * 100
+    const d    = deltasByAccount.get(id)
+    const last = d?.latest
+    const prev = d?.previous
+    if (last && prev && prev.cents > 0) {
+      const chg = ((last.cents - prev.cents) / prev.cents) * 100
       if (chg < -5) {
         const acctName = (accounts ?? []).find(a => a.id === id)
         advice.push({

@@ -8,8 +8,10 @@ import { fmtAUD, fmtCompact, fmtDate } from '@/lib/format'
 import { Card } from '@/components/Card'
 import ChartSkeleton from '@/components/ChartSkeleton'
 import {
-  linearMonthlyGain, projectNetWorth, monthsToTarget, detectMilestones,
+  linearMonthlyGain, projectNetWorth, monthsToTarget, detectMilestones, buildMonthlyNW,
 } from '@/lib/forecast'
+import { netWorthSeries, accountDeltas, latestSnapshotByAccount } from '@/lib/balances'
+import { buildNetWorthChartData } from '@/lib/networth'
 
 const NetWorthChart = dynamic(() => import('./NetWorthChart'), {
   ssr: false,
@@ -46,61 +48,13 @@ export type Goal = {
   target_date: string | null
 }
 
-// ── Account groupings (also used in NetWorthChart.tsx) ───────────────────────
-
-const CHART_GROUPS = [
-  { key: 'investments', label: 'Investments', colour: '#818cf8', types: ['investment'] },
-  { key: 'super',       label: 'Super',       colour: '#34d399', types: ['super'] },
-  { key: 'bank',        label: 'Bank',        colour: '#60a5fa', types: ['bank', 'savings'] },
-] as const
-
-// ── Build chart data ──────────────────────────────────────────────────────────
-
-function buildChartData(snapshots: Snapshot[], accounts: Account[]) {
-  const accountById = Object.fromEntries(accounts.map(a => [a.id, a]))
-
-  // Group snapshots by date
-  const byDate: Record<string, Record<string, number>> = {}
-  for (const snap of snapshots) {
-    if (!byDate[snap.date]) byDate[snap.date] = {}
-    byDate[snap.date][snap.account_id] = snap.aud_balance_cents
-  }
-
-  const dates = Object.keys(byDate).sort()
-
-  return dates.map(date => {
-    const balances = byDate[date]
-    let total = 0
-    const point: Record<string, number | string> = { date, label: fmtDate(date, { month: 'short', year: '2-digit' }) }
-
-    for (const group of CHART_GROUPS) {
-      let groupTotal = 0
-      for (const [accId, cents] of Object.entries(balances)) {
-        const acc = accountById[accId]
-        if (acc && (group.types as readonly string[]).includes(acc.type)) {
-          groupTotal += cents
-        }
-      }
-      point[group.key] = Math.round(groupTotal / 100)
-      total += groupTotal
-    }
-    point.total = Math.round(total / 100)
-    return point
-  })
-}
-
 // ── Latest balances ───────────────────────────────────────────────────────────
 
 function getLatestBalances(snapshots: Snapshot[], accounts: Account[]) {
-  const latest: Record<string, Snapshot> = {}
-  for (const snap of snapshots) {
-    if (!latest[snap.account_id] || snap.date > latest[snap.account_id].date) {
-      latest[snap.account_id] = snap
-    }
-  }
+  const latest = latestSnapshotByAccount(snapshots)
   return accounts
-    .filter(a => latest[a.id])
-    .map(a => ({ account: a, snap: latest[a.id] }))
+    .filter(a => latest.has(a.id))
+    .map(a => ({ account: a, snap: latest.get(a.id)! }))
     .sort((a, b) => b.snap.aud_balance_cents - a.snap.aud_balance_cents)
 }
 
@@ -116,33 +70,26 @@ export default function NetWorthView({ snapshots, accounts, goals }: Props) {
   const [showUpdate, setShowUpdate] = useState(false)
   const [showTotal, setShowTotal]   = useState(true)
 
-  const chartData = useMemo(() => buildChartData(snapshots, accounts), [snapshots, accounts])
+  const accountIds = useMemo(() => new Set(accounts.map(a => a.id)), [accounts])
+  // Carry-forward series: one point per snapshot date, every account's last known balance
+  const chartData = useMemo(() => buildNetWorthChartData(snapshots, accounts), [snapshots, accounts])
   const latestBalances = useMemo(() => getLatestBalances(snapshots, accounts), [snapshots, accounts])
 
   const totalNW = latestBalances.reduce((s, { snap }) => s + snap.aud_balance_cents, 0)
 
-  // Derive prevNW from raw snapshots (second-to-last date)
-  const snapshotDates = useMemo(
-    () => [...new Set(snapshots.map(s => s.date))].sort(),
-    [snapshots],
-  )
-  const prevNW = snapshotDates.length >= 2
-    ? snapshots
-        .filter(s => s.date === snapshotDates[snapshotDates.length - 2])
-        .reduce((sum, s) => sum + s.aud_balance_cents, 0)
-    : null
+  // Change since the previous snapshot date (both sides carried forward)
+  const nwSeries = useMemo(() => netWorthSeries(snapshots, { accountIds }), [snapshots, accountIds])
+  const prevNW   = nwSeries.length >= 2 ? nwSeries[nwSeries.length - 2].totalCents : null
   const nwChange = prevNW !== null ? totalNW - prevNW : null
 
-  // Per-account deltas: balance at prev snapshot date vs latest
-  const prevDateStr = snapshotDates.length >= 2 ? snapshotDates[snapshotDates.length - 2] : null
+  // Per-account deltas: each account's latest vs its OWN previous snapshot
   const prevBalanceByAccount = useMemo(() => {
-    if (!prevDateStr) return new Map<string, number>()
     const map = new Map<string, number>()
-    for (const s of snapshots) {
-      if (s.date === prevDateStr) map.set(s.account_id, s.aud_balance_cents)
+    for (const [id, d] of accountDeltas(snapshots, { accountIds })) {
+      if (d.previous) map.set(id, d.previous.cents)
     }
     return map
-  }, [snapshots, prevDateStr])
+  }, [snapshots, accountIds])
 
   // Stable lookups by kind
   const nwGoal = goals.find(g => g.kind === 'net_worth_milestone')
@@ -151,14 +98,15 @@ export default function NetWorthView({ snapshots, accounts, goals }: Props) {
   const ultimateProgress = ultimateGoal ? Math.min(100, (totalNW / ultimateGoal.target_cents) * 100) : null
 
   // 12.1/12.2: projection + milestone detection
+  // Slope is per calendar month (same series Goals uses), not per snapshot date
   const slope = useMemo(
-    () => chartData.length >= 2 ? linearMonthlyGain(chartData.map(d => d.total as number)) : 0,
-    [chartData],
+    () => linearMonthlyGain(buildMonthlyNW(snapshots, { accountIds }).map(m => m.dollars)),
+    [snapshots, accountIds],
   )
 
   const projectedData = useMemo(
-    () => projectNetWorth(chartData, 12),
-    [chartData],
+    () => projectNetWorth(chartData, 12, slope),
+    [chartData, slope],
   )
 
   // Merge: last historical point gets projected_total = total (so lines connect)

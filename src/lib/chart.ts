@@ -1,10 +1,6 @@
 import type { OwnerKey } from './types'
 
-type Snapshot = {
-  account_id: string
-  date: string
-  aud_balance_cents: number
-}
+// Balance/snapshot helpers live in ./balances.ts
 
 type Transaction = {
   date: string
@@ -17,16 +13,6 @@ export type MonthAggregate = {
   rachel: number
   evan: number
   total: number
-}
-
-export function latestSnapshotsByAccount(snapshots: Snapshot[]): Record<string, Snapshot> {
-  const latest: Record<string, Snapshot> = {}
-  for (const snap of snapshots) {
-    if (!latest[snap.account_id] || snap.date > latest[snap.account_id].date) {
-      latest[snap.account_id] = snap
-    }
-  }
-  return latest
 }
 
 // Single-pass aggregation of expense transactions by month key.

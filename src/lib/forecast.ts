@@ -1,4 +1,5 @@
 import { addMonths, monthKey, monthLabel } from './format'
+import { monthlyNetWorth, type BalanceSnapshot } from './balances'
 
 // ── Least-squares slope (monthly gain, same units as input) ───────────────────
 
@@ -17,12 +18,18 @@ export function linearMonthlyGain(values: number[]): number {
 // chartData must have a `date` (YYYY-MM-DD) and `total` (dollars) field.
 // Returns projected points with `projected_total` (dollars) only.
 
+// Pass `monthlySlope` (dollars/month, e.g. linearMonthlyGain over
+// buildMonthlyNW). chartData points are per snapshot DATE, not per month, so
+// regressing over them directly over-states the slope when snapshots are
+// taken more than once a month.
+
 export function projectNetWorth(
   chartData: Record<string, number | string>[],
   futureMonths: number,
+  monthlySlope?: number,
 ): Record<string, number | string>[] {
   if (chartData.length < 2) return []
-  const slope     = linearMonthlyGain(chartData.map(d => d.total as number))
+  const slope     = monthlySlope ?? linearMonthlyGain(chartData.map(d => d.total as number))
   const lastDate  = chartData[chartData.length - 1].date as string
   const lastTotal = chartData[chartData.length - 1].total as number
   const lastMK    = monthKey(lastDate)
@@ -49,28 +56,15 @@ export function monthsToTarget(
 }
 
 // ── Monthly NW series from raw snapshots ─────────────────────────────────────
-// Returns [{monthKey, totalDollars}] sorted oldest→newest.
+// Returns [{monthKey, totalDollars}] sorted oldest→newest: one entry per
+// calendar month (gap months filled), every account's last known balance
+// carried forward. Index = months, so it is safe for linearMonthlyGain.
 
 export function buildMonthlyNW(
-  snapshots: { date: string; account_id: string; aud_balance_cents: number }[],
+  snapshots: readonly BalanceSnapshot[],
+  opts?: { accountIds?: ReadonlySet<string> },
 ): { mk: string; dollars: number }[] {
-  // Per month: latest snapshot per account → sum
-  const byMonth = new Map<string, Map<string, { date: string; cents: number }>>()
-
-  for (const s of snapshots) {
-    const mk = monthKey(s.date)
-    if (!byMonth.has(mk)) byMonth.set(mk, new Map())
-    const accts = byMonth.get(mk)!
-    const prev  = accts.get(s.account_id)
-    if (!prev || s.date > prev.date) accts.set(s.account_id, { date: s.date, cents: s.aud_balance_cents })
-  }
-
-  return [...byMonth.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([mk, accts]) => ({
-      mk,
-      dollars: Math.round([...accts.values()].reduce((s, v) => s + v.cents, 0) / 100),
-    }))
+  return monthlyNetWorth(snapshots, opts).map(m => ({ mk: m.mk, dollars: Math.round(m.cents / 100) }))
 }
 
 // ── Milestone detection ───────────────────────────────────────────────────────
