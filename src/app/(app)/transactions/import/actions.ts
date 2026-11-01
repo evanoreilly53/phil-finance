@@ -24,6 +24,14 @@ export async function commitImport(rows: ImportRow[]): Promise<{ imported: numbe
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { imported: 0, error: 'Not authenticated' }
 
+  // Server-side guard: never store a foreign amount as if it were AUD, and never
+  // hand Postgres an ambiguous date (its MDY default would swap day/month).
+  const bad = rows.find(r =>
+    !/^\d{4}-\d{2}-\d{2}$/.test(r.date) ||
+    (r.currency !== 'AUD' && !(typeof r.fx_rate === 'number' && r.fx_rate > 0)),
+  )
+  if (bad) return { imported: 0, error: `Invalid row "${bad.description}": needs an ISO date and, for non-AUD, an FX rate` }
+
   const { data: rules } = await supabase
     .from('categorisation_rules')
     .select('pattern, category_id, owner, priority, is_active')

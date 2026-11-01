@@ -1,35 +1,21 @@
 'use client'
 
-import { useState, useId } from 'react'
+import { useState, useId, useMemo } from 'react'
 import Link from 'next/link'
 import { Upload, ChevronRight, Check, AlertTriangle } from 'lucide-react'
 import { commitImport, type ImportRow } from './actions'
-import { matchCategory } from '@/lib/categorise'
 import type { Category, Account } from '../TransactionList'
 import { fmtAUD } from '@/lib/format'
+import {
+  parseCsv, parseRate, resolveImportRow, IMPORT_COLS, type ImportCol,
+} from '@/lib/csvImport'
 
 type Rule = { pattern: string; category_id: string; owner: string | null; priority: number; is_active: boolean }
 
 // Expected columns in the CSV
-const EXPECTED_COLS = ['date', 'description', 'amount', 'currency', 'owner', 'account', 'category', 'notes'] as const
-type ColName = (typeof EXPECTED_COLS)[number]
-
-type ParsedRow = {
-  date: string
-  description: string
-  amountRaw: string
-  currency: string
-  owner: 'joint' | 'rachel' | 'evan'
-  accountName: string
-  categoryName: string
-  notes: string
-  // resolved
-  account_id: string
-  category_id: string
-  amount_cents: number
-  aud_amount_cents: number
-  error?: string
-}
+const EXPECTED_COLS = IMPORT_COLS
+type ColName = ImportCol
+const REQUIRED_COLS: readonly ColName[] = ['date', 'description', 'amount', 'owner', 'account']
 
 type Step = 'upload' | 'map' | 'preview' | 'done'
 
@@ -37,33 +23,22 @@ type Props = {
   categories: Category[]
   accounts: Account[]
   rules: Rule[]
+  /** Latest stored AUD-per-unit rate by currency, from fx_rates (may be empty) */
+  latestRates: Record<string, { rate: number; date: string }>
 }
 
-export default function CsvImport({ categories, accounts, rules }: Props) {
+export default function CsvImport({ categories, accounts, rules, latestRates }: Props) {
   const uid = useId()
   const [step, setStep]             = useState<Step>('upload')
   const [headers, setHeaders]       = useState<string[]>([])
   const [rawRows, setRawRows]       = useState<string[][]>([])
   const [colMap, setColMap]         = useState<Partial<Record<ColName, string>>>({})
-  const [preview, setPreview]       = useState<ParsedRow[]>([])
+  // Fallback FX rate per currency for rows without an fx_rate cell (typed by the user)
+  const [rateInputs, setRateInputs] = useState<Record<string, string>>(
+    () => Object.fromEntries(Object.entries(latestRates).map(([c, r]) => [c, String(r.rate)])),
+  )
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult]         = useState<{ imported: number; error?: string } | null>(null)
-
-  function parseCSV(text: string): { headers: string[]; rows: string[][] } {
-    const lines = text.trim().replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
-    function splitLine(line: string) {
-      const out: string[] = []
-      let inQ = false, cur = ''
-      for (const ch of line) {
-        if (ch === '"') { inQ = !inQ }
-        else if (ch === ',' && !inQ) { out.push(cur.trim()); cur = '' }
-        else cur += ch
-      }
-      out.push(cur.trim())
-      return out
-    }
-    return { headers: splitLine(lines[0]), rows: lines.slice(1).map(splitLine) }
-  }
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -71,13 +46,16 @@ export default function CsvImport({ categories, accounts, rules }: Props) {
     const reader = new FileReader()
     reader.onload = ev => {
       const text = ev.target?.result as string
-      const { headers: h, rows } = parseCSV(text)
+      const { headers: h, rows } = parseCsv(text)
       setHeaders(h)
       setRawRows(rows)
       // Auto-map obvious column names
       const auto: Partial<Record<ColName, string>> = {}
       for (const col of EXPECTED_COLS) {
-        const match = h.find(hh => hh.toLowerCase().replace(/[^a-z]/g, '').includes(col.replace(/[^a-z]/g, '')))
+        const key = col.replace(/[^a-z]/g, '')
+        const match =
+          h.find(hh => hh.toLowerCase().replace(/[^a-z]/g, '') === key) ??
+          h.find(hh => hh.toLowerCase().replace(/[^a-z]/g, '').includes(key))
         if (match) auto[col] = match
       }
       setColMap(auto)
@@ -86,54 +64,27 @@ export default function CsvImport({ categories, accounts, rules }: Props) {
     reader.readAsText(file)
   }
 
-  function buildPreview() {
-    const categoryByName: Record<string, string> = {}
-    for (const c of categories) categoryByName[c.name.toLowerCase()] = c.id
-    const accountByName: Record<string, Account> = {}
-    for (const a of accounts) accountByName[a.name.toLowerCase()] = a
-
+  // Preview is derived, so editing an FX rate re-converts every row immediately
+  const preview = useMemo(() => {
+    if (step !== 'preview' && step !== 'done') return []
+    const defaultRates = Object.fromEntries(
+      Object.entries(rateInputs).map(([c, v]) => [c, parseRate(v)]),
+    )
     const idx = (col: ColName) => headers.indexOf(colMap[col] ?? '')
-    const parsed: ParsedRow[] = rawRows
+    return rawRows
       .filter(r => r.some(c => c.trim()))
       .map(r => {
-        const get = (col: ColName) => (idx(col) >= 0 ? (r[idx(col)] ?? '') : '').trim()
-        const amountRaw   = get('amount')
-        const amtNum      = parseFloat(amountRaw.replace(/[^0-9.-]/g, ''))
-        const currency    = get('currency') || 'AUD'
-        const ownerRaw    = get('owner').toLowerCase()
-        const owner       = (['joint','rachel','evan'].includes(ownerRaw) ? ownerRaw : 'joint') as 'joint'|'rachel'|'evan'
-        const accountName = get('account')
-        const categoryName = get('category')
-        const account     = accountByName[accountName.toLowerCase()]
-        const account_id  = account?.id ?? ''
-        const catId       = categoryByName[categoryName.toLowerCase()] ??
-                            matchCategory(get('description'), owner, rules) ?? ''
-        const cents       = isNaN(amtNum) ? 0 : Math.round(amtNum * 100)
-        const errors: string[] = []
-        if (!get('date')) errors.push('no date')
-        if (!get('description')) errors.push('no description')
-        if (isNaN(amtNum)) errors.push('bad amount')
-        if (!account_id) errors.push(`unknown account "${accountName}"`)
-
-        return {
-          date: get('date'),
-          description: get('description'),
-          amountRaw,
-          currency,
-          owner,
-          accountName,
-          categoryName,
-          notes: get('notes'),
-          account_id,
-          category_id: catId,
-          amount_cents: cents,
-          aud_amount_cents: cents,
-          error: errors.length ? errors.join(', ') : undefined,
-        }
+        const cells: Partial<Record<ColName, string>> = {}
+        for (const col of EXPECTED_COLS) cells[col] = idx(col) >= 0 ? (r[idx(col)] ?? '') : ''
+        return resolveImportRow(cells, { accounts, categories, rules, defaultRates })
       })
-    setPreview(parsed)
-    setStep('preview')
-  }
+  }, [step, rawRows, headers, colMap, rateInputs, accounts, categories, rules])
+
+  // Non-AUD currencies in the file, so the user can supply a rate for each
+  const foreignCurrencies = useMemo(
+    () => [...new Set(preview.map(r => r.currency).filter(c => c !== 'AUD'))].sort(),
+    [preview],
+  )
 
   async function handleCommit() {
     const valid = preview.filter(r => !r.error)
@@ -145,6 +96,7 @@ export default function CsvImport({ categories, accounts, rules }: Props) {
       amount_cents: r.amount_cents,
       aud_amount_cents: r.aud_amount_cents,
       currency: r.currency,
+      fx_rate: r.fx_rate,
       account_id: r.account_id,
       category_id: r.category_id,
       owner: r.owner,
@@ -189,7 +141,10 @@ export default function CsvImport({ categories, accounts, rules }: Props) {
           <div>
             <p className="text-white font-medium">Upload a CSV file</p>
             <p className="text-xs text-gray-500 mt-1">
-              Columns: Date, Description, Amount, Currency, Owner, Account, Category, Notes
+              Columns: Date, Description, Amount, Currency, FX rate, Owner, Account, Category, Notes
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              Dates as YYYY-MM-DD or DD/MM/YYYY. Non-AUD amounts are converted to AUD using the FX rate.
             </p>
           </div>
           <label htmlFor={`${uid}file`} className="cursor-pointer inline-block bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-5 py-2.5 rounded-xl transition-colors">
@@ -207,7 +162,7 @@ export default function CsvImport({ categories, accounts, rules }: Props) {
             <div className="grid grid-cols-2 gap-3">
               {EXPECTED_COLS.map(col => (
                 <div key={col}>
-                  <label htmlFor={`${uid}${col}`} className={lbl}>{col} {['date','description','amount','owner','account'].includes(col) ? '*' : ''}</label>
+                  <label htmlFor={`${uid}${col}`} className={lbl}>{col.replace('_', ' ')} {REQUIRED_COLS.includes(col) ? '*' : ''}</label>
                   <select
                     id={`${uid}${col}`}
                     value={colMap[col] ?? ''}
@@ -222,7 +177,7 @@ export default function CsvImport({ categories, accounts, rules }: Props) {
             </div>
           </div>
           <button
-            onClick={buildPreview}
+            onClick={() => setStep('preview')}
             className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl py-3 transition-colors text-sm"
           >
             Preview →
@@ -237,6 +192,35 @@ export default function CsvImport({ categories, accounts, rules }: Props) {
             <span className="text-gray-400">{validRows.length} valid · {invalidRows.length} errors</span>
             <button onClick={() => setStep('map')} className="text-xs text-indigo-400 hover:text-indigo-300">← Back</button>
           </div>
+
+          {foreignCurrencies.length > 0 && (
+            <div className="bg-gray-900 rounded-2xl border border-gray-800 p-4 space-y-3">
+              <p className="text-xs text-gray-400">
+                Exchange rate to AUD (used for rows without their own FX rate column)
+              </p>
+              {foreignCurrencies.map(cur => (
+                <div key={cur} className="flex items-center gap-3">
+                  <label htmlFor={`${uid}rate-${cur}`} className="text-sm text-white w-28 flex-shrink-0">
+                    1 {cur} = AUD
+                  </label>
+                  <input
+                    id={`${uid}rate-${cur}`}
+                    type="number"
+                    inputMode="decimal"
+                    step="0.0001"
+                    min="0"
+                    value={rateInputs[cur] ?? ''}
+                    onChange={e => setRateInputs(m => ({ ...m, [cur]: e.target.value }))}
+                    placeholder="e.g. 1.65"
+                    className={input}
+                  />
+                  {latestRates[cur] && (
+                    <span className="text-[10px] text-gray-500 flex-shrink-0">saved {latestRates[cur].date}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
           {invalidRows.length > 0 && (
             <div className="bg-red-900/30 border border-red-800 rounded-2xl p-4 space-y-2">
@@ -259,8 +243,13 @@ export default function CsvImport({ categories, accounts, rules }: Props) {
                 <div key={i} className="px-4 py-2.5 grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
                   <span className="text-sm text-white truncate">{r.description}</span>
                   <span className="text-xs text-gray-500">{r.date}</span>
-                  <span className={`text-sm tabular-nums font-medium ${r.amount_cents < 0 ? 'text-red-400' : 'text-green-400'}`}>
-                    {fmtAUD(r.amount_cents)}
+                  <span className={`text-sm tabular-nums font-medium text-right ${r.aud_amount_cents < 0 ? 'text-red-400' : 'text-green-400'}`}>
+                    {fmtAUD(r.aud_amount_cents, { signed: true, full: true })}
+                    {r.currency !== 'AUD' && (
+                      <span className="block text-[10px] text-gray-500 font-normal">
+                        {(r.amount_cents / 100).toFixed(2)} {r.currency} × {r.fx_rate}
+                      </span>
+                    )}
                   </span>
                 </div>
               ))}

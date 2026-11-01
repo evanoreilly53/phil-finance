@@ -292,8 +292,9 @@ export default function SettingsView({ settings, rules, recurring, categories, a
 
   async function handlePost(rec: Recurring) {
     setPostingId(rec.id)
-    await postRecurring(rec as Parameters<typeof postRecurring>[0])
+    const res = await postRecurring(rec as Parameters<typeof postRecurring>[0])
     setPostingId(null)
+    if (res.error) window.alert(res.error)
   }
 
   async function handleDeleteRec(id: string) {

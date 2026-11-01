@@ -130,12 +130,19 @@ export async function postRecurring(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
 
+  // Templates carry no FX rate, so a non-AUD amount would be stored as if it
+  // were AUD. Refuse rather than write a wrong number.
+  if ((recurring.currency ?? 'AUD').toUpperCase() !== 'AUD') {
+    return { error: `Can't auto-post a ${recurring.currency} item (no exchange rate). Add it via Add Transaction instead.` }
+  }
+
   const { error: txError } = await supabase.from('transactions').insert({
     date:             recurring.next_due,
     description:      recurring.description,
     amount_cents:     recurring.amount_cents,
-    currency:         recurring.currency,
-    aud_amount_cents: recurring.amount_cents, // assumes AUD; FX handled separately
+    currency:         'AUD',
+    aud_amount_cents: recurring.amount_cents,
+    fx_rate:          1,
     account_id:       recurring.account_id,
     category_id:      recurring.category_id,
     owner:            recurring.owner,
