@@ -4,23 +4,11 @@ import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import { LogOut, ChevronDown } from 'lucide-react'
 import { signOut } from '@/app/auth/sign-out'
-
-const titles: Record<string, string> = {
-  '/dashboard':            'Dashboard',
-  '/spending':             'Spending',
-  '/networth':             'Net Worth',
-  '/wedding':              'Wedding',
-  '/goals':                'Goals',
-  '/transactions':         'Transactions',
-  '/transactions/import':  'Import CSV',
-  '/insights':             'Insights',
-  '/income':               'Income',
-  '/settings':             'Settings',
-}
+import { PAGE_TITLES } from './nav'
 
 export default function TopBar() {
   const pathname = usePathname()
-  const title    = titles[pathname] ?? 'Bun & Chump'
+  const title    = PAGE_TITLES[pathname] ?? 'Bun & Chump'
   const [menuOpen, setMenuOpen] = useState(false)
 
   return (

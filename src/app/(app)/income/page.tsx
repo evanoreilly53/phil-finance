@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { perthMonthKey } from '@/lib/format'
 import { fetchAll } from '@/lib/supabase/fetchAll'
 import { totalsByMonth } from '@/lib/income'
+import TrackTabs from '@/components/TrackTabs'
 import IncomeView from './IncomeView'
 import type { Transaction } from '../transactions/TransactionList'
 import { getSetting } from '@/lib/settings'
@@ -17,8 +18,9 @@ export default async function IncomePage() {
   const [transactions, expenses, { data: categories }, { data: accounts }, householdMembers, monthlyIncome] = await Promise.all([
     fetchAll((from, to) => supabase
       .from('transactions')
-      .select('id, date, description, amount_cents, aud_amount_cents, currency, fx_rate, owner, is_large_one_off, notes, account_id, category_id, categories(id, name, colour), accounts(id, name)')
+      .select('id, date, description, amount_cents, aud_amount_cents, currency, fx_rate, owner, is_large_one_off, notes, account_id, category_id, categories(id, name, colour), accounts!transactions_account_id_fkey(id, name)')
       .gt('aud_amount_cents', 0)
+      .eq('is_transfer', false)
       .gte('date', yearStart)
       .order('date', { ascending: false })
       .order('id', { ascending: true })
@@ -28,6 +30,7 @@ export default async function IncomePage() {
       .from('transactions')
       .select('date, aud_amount_cents')
       .lt('aud_amount_cents', 0)
+      .eq('is_transfer', false)
       .gte('date', yearStart)
       .order('id', { ascending: true })
       .range(from, to)),
@@ -52,6 +55,8 @@ export default async function IncomePage() {
   const jointYtdCents = allTxs.filter(t => t.owner === 'joint').reduce((s, t) => s + t.aud_amount_cents, 0)
 
   return (
+    <div className="space-y-3">
+    <TrackTabs />
     <IncomeView
       transactions={allTxs}
       spendByMonth={spendByMonth}
@@ -61,5 +66,6 @@ export default async function IncomePage() {
       jointYtdCents={jointYtdCents}
       monthlyIncomeCents={monthlyIncome}
     />
+    </div>
   )
 }

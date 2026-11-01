@@ -37,9 +37,9 @@ export default async function DashboardPage() {
     fetchAll((from, to) => supabase.from('account_snapshots').select('account_id, aud_balance_cents, date')
       .order('date', { ascending: true }).order('id', { ascending: true }).range(from, to)),
     supabase.from('accounts').select('id, is_liquid, type').eq('is_active', true),
-    fetchAll((from, to) => supabase.from('transactions').select('aud_amount_cents, owner').lt('aud_amount_cents', 0)
+    fetchAll((from, to) => supabase.from('transactions').select('aud_amount_cents, owner').lt('aud_amount_cents', 0).eq('is_transfer', false)
       .gte('date', `${thisMonth}-01`).lt('date', `${nextMonth}-01`).order('id').range(from, to)),
-    fetchAll((from, to) => supabase.from('transactions').select('aud_amount_cents').lt('aud_amount_cents', 0)
+    fetchAll((from, to) => supabase.from('transactions').select('aud_amount_cents').lt('aud_amount_cents', 0).eq('is_transfer', false)
       .gte('date', `${prevMonth}-01`).lt('date', `${thisMonth}-01`).order('id').range(from, to)),
     supabase.from('planned_outflows').select('description, amount_cents, due_date, status').eq('status', 'planned').order('due_date').limit(5),
     supabase.from('wedding_items').select('budget_aud_cents, spent_aud_cents, status'),
@@ -51,7 +51,7 @@ export default async function DashboardPage() {
       .limit(5),
     fetchAll((from, to) => supabase.from('transactions')
       .select('date, aud_amount_cents')
-      .lt('aud_amount_cents', 0)
+      .lt('aud_amount_cents', 0).eq('is_transfer', false)
       .gte('date', `${sixMonthsAgo}-01`)
       .lt('date', `${nextMonth}-01`)
       .order('id')

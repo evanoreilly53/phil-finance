@@ -11,6 +11,7 @@ const CHART_GROUPS = [
   { key: 'investments', label: 'Investments', colour: '#818cf8' },
   { key: 'super',       label: 'Super',       colour: '#34d399' },
   { key: 'bank',        label: 'Bank',        colour: '#60a5fa' },
+  { key: 'debts',       label: 'Debts',       colour: '#f87171' },
 ] as const
 
 type Props = {

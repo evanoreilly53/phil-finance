@@ -22,6 +22,11 @@ describe('buildNetWorthChartData', () => {
     expect((p.bank as number) + (p.super as number) + (p.investments as number)).toBe(p.total)
     expect(p.total).toBe(6)
   })
+  it('puts liabilities in a debts group that still sums to the total', () => {
+    const accs = [...accounts, { id: 'cc', type: 'credit_card' }, { id: 'o', type: 'offset' }]
+    const [p] = buildNetWorthChartData([snap('2026-01-01', 'b', 10), snap('2026-01-01', 'cc', -4), snap('2026-01-01', 'o', 5)], accs)
+    expect(p).toMatchObject({ bank: 15, debts: -4, total: 11 })
+  })
   it('ignores snapshots for accounts not passed in (inactive)', () => {
     const [p] = buildNetWorthChartData([snap('2026-01-01', 'b', 1), snap('2026-01-01', 'gone', 999)], accounts)
     expect(p.total).toBe(1)

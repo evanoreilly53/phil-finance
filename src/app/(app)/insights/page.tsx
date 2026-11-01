@@ -21,6 +21,7 @@ export default async function InsightsPage() {
       .from('transactions')
       .select('id, date, aud_amount_cents, owner, category_id, categories(id, name, parent_id)')
       .lt('aud_amount_cents', 0)
+      .eq('is_transfer', false)
       .order('date')
       .order('id')
       .range(from, to)),

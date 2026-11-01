@@ -5,9 +5,11 @@ import { netWorthSeries, type BalanceSnapshot } from './balances'
 // Every account type in the schema must belong to a group, otherwise the
 // stacked lines would not add up to the headline total.
 export const NW_CHART_GROUPS = [
-  { key: 'investments', types: ['investment'] },
+  { key: 'investments', types: ['investment', 'property', 'other_asset'] },
   { key: 'super',       types: ['super'] },
-  { key: 'bank',        types: ['bank', 'savings', 'wedding'] },
+  { key: 'bank',        types: ['bank', 'savings', 'wedding', 'offset', 'cash'] },
+  // Liabilities (Phase 1): balances are negative, so this line sits below zero
+  { key: 'debts',       types: ['credit_card', 'mortgage', 'loan', 'other_liability'] },
 ] as const
 
 type AccountLike = { id: string; type: string }

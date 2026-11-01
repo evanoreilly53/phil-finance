@@ -18,7 +18,7 @@ export default function SpendSummary({ transactions }: Props) {
   const categories = useMemo(() => {
     const totals = new Map<string, { name: string; cents: number; colour: string }>()
     for (const t of transactions) {
-      if (t.aud_amount_cents >= 0) continue
+      if (t.aud_amount_cents >= 0 || t.is_transfer) continue
       const name = t.categories?.name ?? 'Uncategorised'
       const colour = t.categories?.colour ?? '#6b7280'
       const existing = totals.get(name)

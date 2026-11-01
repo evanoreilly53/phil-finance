@@ -26,6 +26,8 @@ export type Transaction = {
   fx_rate: number | null
   owner: OwnerKey
   is_large_one_off: boolean
+  /** Money moved between our own accounts: not spending or income. Optional so older loaders still type-check. */
+  is_transfer?: boolean
   notes: string | null
   account_id: string
   category_id: string | null
@@ -142,8 +144,8 @@ export default function TransactionList({ transactions, categories, accounts, fr
     return rows
   }, [transactions, search, owner, month, typeFilter, sortKey, sortAsc])
 
-  const expenseCents = useMemo(() => filtered.filter(t => t.aud_amount_cents < 0).reduce((s, t) => s + t.aud_amount_cents, 0), [filtered])
-  const incomeCents  = useMemo(() => filtered.filter(t => t.aud_amount_cents > 0).reduce((s, t) => s + t.aud_amount_cents, 0), [filtered])
+  const expenseCents = useMemo(() => filtered.filter(t => t.aud_amount_cents < 0 && !t.is_transfer).reduce((s, t) => s + t.aud_amount_cents, 0), [filtered])
+  const incomeCents  = useMemo(() => filtered.filter(t => t.aud_amount_cents > 0 && !t.is_transfer).reduce((s, t) => s + t.aud_amount_cents, 0), [filtered])
   const netCents     = expenseCents + incomeCents
 
   function toggleSort(key: SortKey) {
@@ -311,6 +313,9 @@ export default function TransactionList({ transactions, categories, accounts, fr
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-white truncate">{t.description}</span>
+                  {t.is_transfer && (
+                    <span className="text-xs bg-sky-500/20 text-sky-300 px-1.5 py-0.5 rounded-md flex-shrink-0">transfer</span>
+                  )}
                   {t.is_large_one_off && (
                     <span className="text-xs bg-orange-500/20 text-orange-300 px-1.5 py-0.5 rounded-md flex-shrink-0">one-off</span>
                   )}

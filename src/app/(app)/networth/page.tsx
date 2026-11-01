@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { fetchAll } from '@/lib/supabase/fetchAll'
 import NetWorthView from './NetWorthView'
+import TrackTabs from '@/components/TrackTabs'
 
 export default async function NetWorthPage() {
   const supabase = await createClient()
@@ -24,10 +25,13 @@ export default async function NetWorthPage() {
   ])
 
   return (
+    <div className="space-y-3">
+    <TrackTabs />
     <NetWorthView
       snapshots={snapshots}
       accounts={accounts ?? []}
       goals={goals ?? []}
     />
+    </div>
   )
 }

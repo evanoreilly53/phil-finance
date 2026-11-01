@@ -5,6 +5,10 @@ import Modal from '@/components/Modal'
 import { saveSnapshots } from './actions'
 import type { Account, Snapshot } from './NetWorthView'
 
+const LIABILITY_TYPES = new Set(['credit_card', 'mortgage', 'loan', 'other_liability'])
+/** -1 for liabilities (entered as the amount owed, stored negative), else 1. */
+function owedSign(type: string): 1 | -1 { return LIABILITY_TYPES.has(type) ? -1 : 1 }
+
 type Props = {
   accounts: Account[]
   latestSnapshots: Record<string, Snapshot>
@@ -28,7 +32,7 @@ export default function SnapshotModal({ accounts, latestSnapshots, onClose }: Pr
       accounts.map(a => {
         const snap = latestSnapshots[a.id]
         if (!snap || snap.date !== latestSnapDate || perthToday !== latestSnapDate) return [a.id, '']
-        return [a.id, (snap.balance_cents / 100).toFixed(2)]
+        return [a.id, (owedSign(a.type) * snap.balance_cents / 100).toFixed(2)]
       }),
     )
   }
@@ -64,7 +68,8 @@ export default function SnapshotModal({ accounts, latestSnapshots, onClose }: Pr
     const rows = accounts
       .filter(a => balances[a.id] !== '' && balances[a.id] !== undefined)
       .map(a => {
-        const native = parseFloat(balances[a.id])
+        // Liabilities are typed as the amount owed and stored negative
+        const native = owedSign(a.type) * parseFloat(balances[a.id])
         if (isNaN(native)) return null
         if (a.currency !== 'AUD') {
           const rate = parseFloat(fxRates[a.id] || '1')
@@ -91,8 +96,13 @@ export default function SnapshotModal({ accounts, latestSnapshots, onClose }: Pr
     if (!grouped[a.type]) grouped[a.type] = []
     grouped[a.type].push(a)
   }
-  const typeOrder = ['bank', 'savings', 'investment', 'super']
-  const typeLabel: Record<string, string> = { bank: 'Bank', savings: 'Savings', investment: 'Investments', super: 'Super' }
+  const knownOrder = ['bank', 'savings', 'offset', 'wedding', 'cash', 'investment', 'super', 'property', 'other_asset', 'credit_card', 'mortgage', 'loan', 'other_liability']
+  const typeOrder = [...knownOrder, ...Object.keys(grouped).filter(t => !knownOrder.includes(t))]
+  const typeLabel: Record<string, string> = {
+    bank: 'Bank', savings: 'Savings', offset: 'Offset', wedding: 'Wedding', cash: 'Cash', investment: 'Investments',
+    super: 'Super', property: 'Property', other_asset: 'Other assets',
+    credit_card: 'Credit cards (amount owed)', mortgage: 'Mortgage (amount owed)', loan: 'Loans (amount owed)', other_liability: 'Other debts (amount owed)',
+  }
 
   return (
     <Modal title="Update Balances" onClose={onClose}>
@@ -104,7 +114,7 @@ export default function SnapshotModal({ accounts, latestSnapshots, onClose }: Pr
 
         {typeOrder.filter(t => grouped[t]?.length).map(type => (
           <div key={type}>
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2" aria-hidden="true">{typeLabel[type]}</p>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2" aria-hidden="true">{typeLabel[type] ?? type}</p>
             <div className="space-y-3">
               {grouped[type].map(acc => (
                 <div key={acc.id}>
