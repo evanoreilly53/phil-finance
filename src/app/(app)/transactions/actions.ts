@@ -49,13 +49,17 @@ export async function updateTransaction(id: string, input: TransactionInput): Pr
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
 
-  const { error } = await supabase
+  // No created_by filter: either household member may fix the other's rows.
+  // RLS ("Household members can update", 0002_rls_household.sql) is the guard.
+  const { data, error } = await supabase
     .from('transactions')
     .update({ ...input })
     .eq('id', id)
-    .eq('created_by', user.id)
+    .select('id')
 
   if (error) return { error: error.message }
+  // PostgREST reports success for 0 rows affected — surface it instead of failing silently
+  if (!data || data.length === 0) return { error: 'Transaction not found or you do not have permission to edit it' }
   revalidatePath('/transactions')
   return {}
 }
@@ -65,8 +69,10 @@ export async function deleteTransaction(id: string): Promise<{ error?: string }>
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
 
-  const { error } = await supabase.from('transactions').delete().eq('id', id).eq('created_by', user.id)
+  // No created_by filter — RLS ("Household members can delete") is the guard.
+  const { data, error } = await supabase.from('transactions').delete().eq('id', id).select('id')
   if (error) return { error: error.message }
+  if (!data || data.length === 0) return { error: 'Transaction not found or you do not have permission to delete it' }
   revalidatePath('/transactions')
   return {}
 }

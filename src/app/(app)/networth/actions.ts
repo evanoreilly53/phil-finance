@@ -32,13 +32,15 @@ export async function deleteSnapshot(id: string): Promise<{ error?: string }> {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
 
-  const { error } = await supabase
+  // No created_by filter — RLS ("Household members can delete") is the guard.
+  const { data, error } = await supabase
     .from('account_snapshots')
     .delete()
     .eq('id', id)
-    .eq('created_by', user.id)
+    .select('id')
 
   if (error) return { error: error.message }
+  if (!data || data.length === 0) return { error: 'Snapshot not found or you do not have permission to delete it' }
   revalidatePath('/networth')
   return {}
 }
