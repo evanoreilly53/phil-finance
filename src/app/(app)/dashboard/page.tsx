@@ -8,6 +8,7 @@ import { fetchAll } from '@/lib/supabase/fetchAll'
 import { latestBalanceByAccount, currentNetWorthCents, netWorthSeries, accountDeltas } from '@/lib/balances'
 import NWSparkline from './NWSparkline'
 import SpendingTrend from './SpendingTrend'
+import DataHealth from './DataHealth'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -228,6 +229,9 @@ export default async function DashboardPage() {
 
       {/* Advice cards (dismissible, client-side) */}
       {advice.length > 0 && <AdviceCards cards={advice} />}
+
+      {/* Review queue + data freshness (Phase 1) */}
+      <DataHealth />
 
       {/* Summary grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

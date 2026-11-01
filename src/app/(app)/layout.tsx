@@ -1,6 +1,7 @@
 import BottomNav from '@/components/BottomNav'
 import TopBar from '@/components/TopBar'
 import InstallPrompt from '@/components/InstallPrompt'
+import FxRefresher from '@/components/FxRefresher'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -19,6 +20,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
       </main>
       <InstallPrompt />
+      <FxRefresher />
       <BottomNav />
     </div>
   )
