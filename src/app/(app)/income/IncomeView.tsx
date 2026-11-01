@@ -6,6 +6,7 @@ import {
   ComposedChart, Line,
 } from 'recharts'
 import { fmtAUD, fmtDate, monthKey, monthLabel } from '@/lib/format'
+import { incomeVsSpending, totalsByMonth } from '@/lib/income'
 import ChartTooltip from '@/components/ChartTooltip'
 import { Card } from '@/components/Card'
 import type { Transaction, Category, Account } from '../transactions/TransactionList'
@@ -15,6 +16,8 @@ type YtdEntry = { key: OwnerKey; label: string; ytdCents: number; expectedCents:
 
 type Props = {
   transactions: Transaction[]
+  /** Expense totals per YYYY-MM (positive cents) */
+  spendByMonth: Record<string, number>
   categories: Category[]
   accounts: Account[]
   ytd: YtdEntry[]
@@ -22,7 +25,7 @@ type Props = {
   monthlyIncomeCents: number
 }
 
-export default function IncomeView({ transactions, ytd, jointYtdCents, monthlyIncomeCents }: Props) {
+export default function IncomeView({ transactions, spendByMonth, ytd, jointYtdCents, monthlyIncomeCents }: Props) {
   const [owner, setOwner] = useState<'all' | OwnerKey>('all')
   const [month, setMonth] = useState<string>('all')
 
@@ -58,24 +61,23 @@ export default function IncomeView({ transactions, ytd, jointYtdCents, monthlyIn
     })
   }, [transactions, allMonthKeys6])
 
+  // `transactions` only holds income rows; expenses arrive pre-aggregated in spendByMonth
   const incomeVsSpendData = useMemo(() => {
-    return allMonthKeys6.map(mk => {
-      const incomeCents  = transactions
-        .filter(t => monthKey(t.date) === mk && t.aud_amount_cents > 0)
-        .reduce((s, t) => s + t.aud_amount_cents, 0)
-      const spendCents   = transactions
-        .filter(t => monthKey(t.date) === mk && t.aud_amount_cents < 0)
-        .reduce((s, t) => s + Math.abs(t.aud_amount_cents), 0)
-      const income  = Math.round(incomeCents / 100)
-      const spending = Math.round(spendCents / 100)
+    const monthKeys = [...new Set([
+      ...transactions.map(t => monthKey(t.date)),
+      ...Object.keys(spendByMonth),
+    ])].sort().slice(-6)
+    return incomeVsSpending(monthKeys, totalsByMonth(transactions, 'income'), spendByMonth).map(p => {
+      const income   = Math.round(p.incomeCents / 100)
+      const spending = Math.round(p.spendCents / 100)
       return {
-        label: monthLabel(mk, { month: 'short', year: '2-digit' }),
+        label: monthLabel(p.mk, { month: 'short', year: '2-digit' }),
         income,
         spending,
         savings: income - spending,
       }
     })
-  }, [transactions, allMonthKeys6])
+  }, [transactions, spendByMonth])
 
   return (
     <div className="space-y-4">
