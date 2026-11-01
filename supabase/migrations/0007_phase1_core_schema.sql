@@ -116,7 +116,11 @@ ALTER TABLE transactions ADD COLUMN IF NOT EXISTS external_id         text;    -
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS import_batch_id     uuid REFERENCES import_batches(id) ON DELETE SET NULL;
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS balance_after_cents bigint;  -- bank running balance after this row, if provided
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_transfer         boolean NOT NULL DEFAULT false;  -- excluded from spending/income
-ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_account_id uuid REFERENCES accounts(id) ON DELETE SET NULL;      -- the other own account
+-- transfer_account_id deliberately has NO foreign key: a second FK from
+-- transactions to accounts would make PostgREST's `accounts(...)` embed
+-- ambiguous and break the currently deployed app the moment this runs.
+-- (Accounts are deactivated, never deleted, so a dangling id isn't a risk.)
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_account_id uuid;                                                -- the other own account
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_peer_id    uuid REFERENCES transactions(id) ON DELETE SET NULL;  -- the matching leg, if we hold it
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS duplicate_of_id     uuid REFERENCES transactions(id) ON DELETE SET NULL;  -- suspected original
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS review_flags        text[] NOT NULL DEFAULT '{}';
