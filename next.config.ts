@@ -18,6 +18,10 @@ const nextConfig: NextConfig = {
   },
   typedRoutes: true,
   cacheComponents: true,
+  experimental: {
+    // A year of CommBank rows (~2–3k) is ~1MB of JSON; the default limit is 1MB.
+    serverActions: { bodySizeLimit: '4mb' },
+  },
   async headers() {
     return [
       {
