@@ -10,6 +10,12 @@ import { matchCategory } from './categorise'
  * Blank lines are dropped.
  */
 export function parseCsv(text: string): { headers: string[]; rows: string[][] } {
+  const nonBlank = parseCsvRecords(text)
+  return { headers: nonBlank[0] ?? [], rows: nonBlank.slice(1) }
+}
+
+/** All non-blank records, without treating the first as a header (CommBank exports have none). */
+export function parseCsvRecords(text: string): string[][] {
   const src = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
   const records: string[][] = []
   let row: string[] = []
@@ -39,8 +45,7 @@ export function parseCsv(text: string): { headers: string[]; rows: string[][] } 
   }
   if (cell !== '' || row.length > 0) { row.push(cell.trim()); records.push(row) }
 
-  const nonBlank = records.filter(r => r.some(c => c !== ''))
-  return { headers: nonBlank[0] ?? [], rows: nonBlank.slice(1) }
+  return records.filter(r => r.some(c => c !== ''))
 }
 
 // ── Amounts ──────────────────────────────────────────────────────────────────
@@ -129,12 +134,14 @@ export function parseRate(raw: string | null | undefined): number | null {
 
 // ── Row resolution ───────────────────────────────────────────────────────────
 
-export const IMPORT_COLS = ['date', 'description', 'amount', 'currency', 'fx_rate', 'owner', 'account', 'category', 'notes'] as const
+export const IMPORT_COLS = ['date', 'description', 'amount', 'debit', 'credit', 'balance', 'currency', 'fx_rate', 'owner', 'account', 'category', 'notes'] as const
 export type ImportCol = (typeof IMPORT_COLS)[number]
 export type ImportOwner = 'joint' | 'rachel' | 'evan'
 
 type Ctx = {
-  accounts:   readonly { id: string; name: string; currency: string }[]
+  accounts:   readonly { id: string; name: string; currency: string; owner?: string }[]
+  /** When the whole file belongs to one account, rows don't need an Account column. */
+  fixedAccountId?: string | null
   categories: readonly { id: string; name: string }[]
   rules:      Parameters<typeof matchCategory>[2]
   /** Fallback AUD-per-unit rate by currency (e.g. { EUR: 1.65 }) when a row has no fx_rate cell. */
@@ -152,6 +159,7 @@ export type ResolvedImportRow = {
   account_id: string
   category_id: string
   amount_cents: number
+  balance_cents: number | null
   aud_amount_cents: number
   fx_rate: number
   error?: string
@@ -161,11 +169,13 @@ export function resolveImportRow(cells: Partial<Record<ImportCol, string>>, ctx:
   const get = (c: ImportCol) => (cells[c] ?? '').trim()
   const errors: string[] = []
 
-  const accountName = get('account')
-  const account = ctx.accounts.find(a => a.name.toLowerCase() === accountName.toLowerCase())
+  const fixed = ctx.fixedAccountId ? ctx.accounts.find(a => a.id === ctx.fixedAccountId) : undefined
+  const accountName = fixed?.name ?? get('account')
+  const account = fixed ?? ctx.accounts.find(a => a.name.toLowerCase() === accountName.toLowerCase())
   if (!account) errors.push(`unknown account "${accountName}"`)
 
-  const ownerRaw = get('owner').toLowerCase()
+  // Owner: column, else the account's owner, else joint
+  const ownerRaw = (get('owner') || account?.owner || '').toLowerCase()
   const owner = (['joint', 'rachel', 'evan'].includes(ownerRaw) ? ownerRaw : 'joint') as ImportOwner
 
   const rawDate = get('date')
@@ -176,9 +186,21 @@ export function resolveImportRow(cells: Partial<Record<ImportCol, string>>, ctx:
   const description = get('description')
   if (!description) errors.push('no description')
 
-  const amountRaw = get('amount')
-  const cents = parseAmountCents(amountRaw)
+  // Either one signed Amount column, or separate Debit / Credit columns
+  // (a debit is money out whatever sign the bank printed).
+  let amountRaw = get('amount')
+  let cents: number | null
+  if (amountRaw === '' && (get('debit') !== '' || get('credit') !== '')) {
+    const debit  = get('debit')  === '' ? 0 : parseAmountCents(get('debit'))
+    const credit = get('credit') === '' ? 0 : parseAmountCents(get('credit'))
+    cents = debit === null || credit === null ? null : Math.abs(credit) - Math.abs(debit)
+    amountRaw = get('debit') || get('credit')
+  } else {
+    cents = parseAmountCents(amountRaw)
+  }
   if (cents === null) errors.push('bad amount')
+  const balanceRaw = get('balance')
+  const balance_cents = balanceRaw === '' ? null : parseAmountCents(balanceRaw)
 
   // Currency: explicit column, else the account's own currency, else AUD
   const currency = (get('currency') || account?.currency || 'AUD').toUpperCase()
@@ -203,6 +225,7 @@ export function resolveImportRow(cells: Partial<Record<ImportCol, string>>, ctx:
     account_id: account?.id ?? '',
     category_id,
     amount_cents: cents ?? 0,
+    balance_cents,
     aud_amount_cents: fx?.aud_amount_cents ?? 0,
     fx_rate: fx?.fx_rate ?? 0,
     error: errors.length ? errors.join(', ') : undefined,
