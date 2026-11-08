@@ -37,7 +37,7 @@ export function spendingBaseline(p: {
   const n = Math.max(1, p.months.length)
   const keys = new Set([...sums.keys(), ...[...targets.keys()].filter(k => !byId.get(k)?.parent_id)])
 
-  const lines: SpendingLine[] = [...keys].map(key => {
+  const lines: SpendingLine[] = [...keys].map((key): SpendingLine => {
     const cat = byId.get(key)
     const averageCents = Math.max(0, Math.round((sums.get(key) ?? 0) / n))
     const budget = targets.get(key)
