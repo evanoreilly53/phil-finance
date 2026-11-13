@@ -8,7 +8,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { ASSUMPTIONS, isAssumptionKey, validateAssumptionValues, type AssumptionKey } from '@/lib/assumptions'
+import { ASSUMPTIONS, assumptionDef, assumptionLabel, validateAssumptionValues, type AssumptionKey } from '@/lib/assumptions'
 import { mergeHouseParams, mergeHouseSettings, validateHouseEdit, houseParams, depositAccountIdsFromParams, type HouseSettingsEdit } from '@/lib/projection/inputs'
 import { scenarioChain, selectScenarioEvents, exampleScenarios } from '@/lib/projection/scenarios'
 import { addMonthsKey, monthEnd } from '@/lib/projection/schedule'
@@ -126,9 +126,9 @@ export async function archiveScenario(id: string): Promise<Result> {
 export async function saveScenarioAssumptions(id: string, input: Record<string, string>): Promise<Result> {
   const ctx = await auth()
   if (!ctx.user) return { error: 'Not authenticated' }
-  const blanks = Object.entries(input).filter(([k, v]) => isAssumptionKey(k) && String(v).trim() === '').map(([k]) => k)
+  const blanks = Object.entries(input).filter(([k, v]) => assumptionDef(k) && String(v).trim() === '').map(([k]) => k)
   const { values, errors } = validateAssumptionValues(input)
-  if (Object.keys(errors).length) return { error: Object.entries(errors).map(([k, e]) => `${ASSUMPTIONS[k as AssumptionKey].label}: ${e}`).join('; ') }
+  if (Object.keys(errors).length) return { error: Object.entries(errors).map(([k, e]) => `${assumptionLabel(k)}: ${e}`).join('; ') }
   const { data: s } = await ctx.supabase.from('scenarios').select('is_baseline').eq('id', id).maybeSingle()
   if (!s) return { error: 'Scenario not found' }
   const rows = Object.entries(values).map(([key, value]) => ({ scenario_id: id, key, value, updated_by: ctx.user!.id, updated_at: new Date().toISOString() }))

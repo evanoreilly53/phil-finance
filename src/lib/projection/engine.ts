@@ -19,10 +19,11 @@
 // Planning model, not advice: every rate is an editable assumption.
 
 import { annualTakeHome, type TaxBreakdown } from '../tax/takeHome'
-import { fyOf, fyStartYear, type FyKey } from '../tax/config'
+import { fyOf, fyStartYear, taxConfigFor, type FyKey } from '../tax/config'
+import { FHSS } from '../house/rules'
 import { addMonthsKey, monthDiff, monthEnd, monthStart, occurrencesInMonth, OCCURRENCES_PER_YEAR } from './schedule'
 import type {
-  Assumptions, CashflowSummary, Indexation, MonthTotals, ProjAccount, Projection,
+  Assumptions, CashflowSummary, FhssRelease, Indexation, MonthTotals, ProjAccount, Projection,
   ProjectionInput, ProjectionMonth, TraceEntry,
 } from './types'
 
@@ -58,7 +59,7 @@ function emptySummary(): CashflowSummary {
   return {
     grossPayCents: 0, taxCents: 0, takeHomeCents: 0, otherIncomeCents: 0, superInCents: 0, spendingCents: 0,
     plannedOutCents: 0, loanRepaymentCents: 0, loanInterestCents: 0, interestCents: 0, investmentGrowthCents: 0,
-    superGrowthCents: 0, propertyGrowthCents: 0, eventCostsCents: 0, extraCents: 0, netCashCents: 0,
+    superGrowthCents: 0, propertyGrowthCents: 0, eventCostsCents: 0, extraCents: 0, sacrificeCents: 0, fhssReleaseCents: 0, netCashCents: 0,
   }
 }
 
@@ -133,6 +134,29 @@ export function runProjection(input: ProjectionInput): Projection {
   const household = input.people.length >= 2
   let rentStopBaseCents = 0
 
+  // ── Salary sacrifice + FHSS (Phase 5) ───────────────────────────────────────
+  const sacrificeBy = new Map((input.sacrifice ?? []).filter(s => s.annualCents > 0).map(s => [s.personKey, Math.round(s.annualCents)]))
+  const fhssPlan = input.fhss ?? null
+  const rSic = (fhssPlan?.sicRatePct ?? FHSS.sicRatePct) / 100 / 12
+  const fhssState = new Map<string, { counted: number; bal: number; byFy: Map<FyKey, number> }>()
+  const fhssReleases: FhssRelease[] = []
+  // Voluntary concessional contributions entered on Track › Income, per FY and person (they share the cap).
+  const concessionalCache = new Map<string, number>()
+  const enteredConcessional = (fy: FyKey, personKey: string): number => {
+    const k = `${fy}|${personKey}`
+    let v = concessionalCache.get(k)
+    if (v === undefined) {
+      v = 0
+      const first = `${fyStartYear(fy)}-07`
+      for (const c of input.cashflows) {
+        if (c.kind !== 'super_contribution' || !c.concessional || c.personKey !== personKey) continue
+        for (let j = 0; j < 12; j++) v += Math.abs(c.amountCents) * occurrencesInMonth(c, addMonthsKey(first, j)).length
+      }
+      concessionalCache.set(k, v)
+    }
+    return v
+  }
+
   const opening = { ...totals(), balances: Object.fromEntries(bal) }
   const months: ProjectionMonth[] = []
 
@@ -206,37 +230,105 @@ export function runProjection(input: ProjectionInput): Projection {
     }
     let combined = 0
     for (const v of grossByPerson.values()) combined += v.gross
+    const payNow = new Map<string, { gross: number; sacrifice: number }>()
+    if (fhssPlan && mk < fhssPlan.requestMonth) for (const st of fhssState.values()) st.bal += Math.round(st.bal * rSic)
     for (const [personKey, { gross, ids }] of grossByPerson) {
       const p = input.people.find(x => x.key === personKey)
       const name = p?.name ?? personKey
-      const key = `${fy}|${personKey}|${gross}|${household ? combined : 0}`
-      let tb = taxCache.get(key)
-      if (!tb) {
-        tb = annualTakeHome({
-          grossCents: gross,
-          hasPrivateHospital: p?.hasPrivateHospital ?? true,
-          hasHecs: p?.hasHecs ?? false,
-          family: household ? { combinedIncomeCents: combined } : undefined,
-        }, fy)
-        taxCache.set(key, tb)
+      const taxOf = (sacrificeCents: number) => {
+        const key = `${fy}|${personKey}|${gross}|${household ? combined : 0}|${sacrificeCents}`
+        let t = taxCache.get(key)
+        if (!t) {
+          t = annualTakeHome({
+            grossCents: gross,
+            salarySacrificeCents: sacrificeCents,
+            hasPrivateHospital: p?.hasPrivateHospital ?? true,
+            hasHecs: p?.hasHecs ?? false,
+            family: household ? { combinedIncomeCents: combined } : undefined,
+          }, fy)
+          taxCache.set(key, t)
+        }
+        return t
       }
+      // Salary sacrifice: the planned yearly amount (scaled by any leave), capped at the
+      // concessional cap left after employer super and contributions entered on Track › Income.
+      let sacrifice = 0
+      const planned = Math.round((sacrificeBy.get(personKey) ?? 0) * (payShare.get(personKey)?.pct ?? 100) / 100)
+      if (planned > 0) {
+        const base = taxOf(0)
+        const entered = enteredConcessional(fy, personKey)
+        const room = Math.max(0, base.concessionalCapCents - base.sgCents - entered)
+        sacrifice = Math.min(planned, room, gross)
+        if (sacrifice < planned) warnOnce(`${name}'s salary sacrifice is limited to ${fmt(sacrifice)} a year in ${fy} by the concessional cap (${fmt(base.concessionalCapCents)} less ${fmt(base.sgCents)} employer super${entered ? ` and ${fmt(entered)} entered on Track › Income` : ''}).`)
+      }
+      payNow.set(personKey, { gross, sacrifice })
+      const tb = taxOf(sacrifice)
       if (tb.extrapolated) extrapolated.add(fy)
       const mGross = Math.round(gross / 12)
       const mTax = Math.round(tb.totalTaxCents / 12)
       const mHelp = Math.round(tb.helpCents / 12)
-      const net = mGross - mTax - mHelp
+      const mSac = Math.round(sacrifice / 12)
+      const net = mGross - mTax - mHelp - mSac
       const ref = { table: 'salary' as const, id: ids[0] }
       const leave = payShare.get(personKey)
       trace.push({ kind: 'income', label: `${name}: gross pay`, cents: mGross, nwCents: 0, memo: true, ref, detail: `${fmt(gross)}/yr in ${fy}${leave ? ` (${leave.name}: ${leave.pct}% of pay)` : ''}` })
       trace.push({
         kind: 'tax', label: `${name}: tax${mHelp ? ' + HELP' : ''}`, cents: -(mTax + mHelp), nwCents: 0, memo: true, ref,
         detail: `Income tax ${fmt(tb.incomeTaxCents - tb.litoCents)}, Medicare ${fmt(tb.medicareLevyCents)}` +
-          (tb.mlsCents ? `, MLS ${fmt(tb.mlsCents)}` : '') + (tb.helpCents ? `, HELP ${fmt(tb.helpCents)}` : '') + ` per year${tb.extrapolated ? ' (tax settings carried forward)' : ''}`,
+          (tb.mlsCents ? `, MLS ${fmt(tb.mlsCents)}` : '') + (tb.helpCents ? `, HELP ${fmt(tb.helpCents)}` : '') + ` per year` +
+          (sacrifice ? ` on ${fmt(tb.taxableCents)} taxable after salary sacrifice` : '') + (tb.extrapolated ? ' (tax settings carried forward)' : ''),
       })
-      move(sweep, net, { kind: 'income', label: `${name}: take-home pay`, nwCents: net, ref })
+      move(sweep, net, { kind: 'income', label: `${name}: take-home pay`, nwCents: net, ref, detail: sacrifice ? `After ${fmt(mSac)} salary sacrifice this month` : undefined })
       const superNet = Math.round(tb.superNetCents / 12)
-      if (superNet) move(superAccountFor(personKey), superNet, { kind: 'super', label: `${name}: employer super`, nwCents: superNet, ref, detail: `${fmt(tb.sgCents)}/yr SG less 15% contributions tax` })
-      cf.grossPayCents += mGross; cf.taxCents += mTax + mHelp; cf.takeHomeCents += net; cf.superInCents += superNet
+      const ct = taxConfigFor(fy).config.super.contributionsTaxRate
+      const sacNet = sacrifice ? Math.round(sacrifice * (1 - ct) / 12) : 0
+      const sgNet = superNet - sacNet
+      if (sgNet) move(superAccountFor(personKey), sgNet, { kind: 'super', label: `${name}: employer super`, nwCents: sgNet, ref, detail: `${fmt(tb.sgCents)}/yr SG less 15% contributions tax` })
+      if (sacNet) {
+        move(superAccountFor(personKey), sacNet, {
+          kind: 'super', label: `${name}: salary sacrifice`, nwCents: sacNet, ref,
+          detail: `${fmt(sacrifice)}/yr pre-tax, less 15% contributions tax${fhssPlan && mk < fhssPlan.requestMonth ? '; counts toward FHSS' : ''}`,
+        })
+      }
+      cf.grossPayCents += mGross; cf.taxCents += mTax + mHelp; cf.takeHomeCents += net; cf.superInCents += superNet; cf.sacrificeCents += mSac
+      // FHSS: sacrifice before the release request counts, within $15k a FY and $50k in total.
+      if (fhssPlan && mk < fhssPlan.requestMonth && mSac > 0) {
+        const st = fhssState.get(personKey) ?? { counted: 0, bal: 0, byFy: new Map<FyKey, number>() }
+        const used = st.byFy.get(fy) ?? 0
+        const c = Math.max(0, Math.min(mSac, FHSS.perFyCapCents - used, FHSS.lifetimeCapCents - st.counted))
+        st.counted += c; st.bal += c; st.byFy.set(fy, used + c)
+        fhssState.set(personKey, st)
+      }
+    }
+
+    // 2b. FHSS release (Phase 5): 85% of counted contributions + deemed earnings,
+    // taxed at marginal rate (incl. Medicare) less a 30% offset; lands in cash.
+    if (fhssPlan && mk === fhssPlan.releaseMonth) {
+      for (const [personKey, st] of fhssState) {
+        if (st.counted <= 0) continue
+        const p = input.people.find(x => x.key === personKey)
+        const name = p?.name ?? personKey
+        const earnings = st.bal - st.counted
+        const relContrib = Math.round(st.counted * FHSS.concessionalReleasePct / 100)
+        const released = relContrib + earnings
+        const pay = payNow.get(personKey) ?? { gross: 0, sacrifice: 0 }
+        const person = { hasPrivateHospital: p?.hasPrivateHospital ?? true, hasHecs: p?.hasHecs ?? false, salarySacrificeCents: pay.sacrifice }
+        const without = annualTakeHome({ ...person, grossCents: pay.gross }, fy)
+        const withRel = annualTakeHome({ ...person, grossCents: pay.gross + released }, fy)
+        const tax = Math.max(0, withRel.totalTaxCents - without.totalTaxCents - Math.round(released * FHSS.releaseOffsetPct / 100))
+        const net = released - tax
+        const ref = { table: 'salary' as const, id: personKey }
+        move(superAccountFor(personKey), -released, {
+          kind: 'fhss', label: `${name}: FHSS release from super`, nwCents: -released, ref,
+          detail: `85% of ${fmt(st.counted)} counted + ${fmt(earnings)} deemed earnings (estimate)`,
+        })
+        move(sweep, net, {
+          kind: 'fhss', label: `${name}: FHSS release for the house`, nwCents: net, ref,
+          detail: `${fmt(released)} less ${fmt(tax)} tax (marginal rate less 30% offset; estimate)`,
+        })
+        cf.fhssReleaseCents += net
+        fhssReleases.push({ personKey, name, month: mk, countedCents: st.counted, releasableContribCents: relContrib, deemedEarningsCents: earnings, releasedCents: released, taxCents: tax, netCents: net })
+      }
     }
     for (const ni of input.netIncomes) {
       if (ni.personKey && peopleWithSalary.has(ni.personKey)) continue
@@ -377,7 +469,7 @@ export function runProjection(input: ProjectionInput): Projection {
       cf.extraCents = extra
     }
 
-    cf.netCashCents = cf.takeHomeCents + cf.otherIncomeCents - cf.spendingCents - cf.plannedOutCents - cf.loanRepaymentCents + cf.extraCents
+    cf.netCashCents = cf.takeHomeCents + cf.otherIncomeCents - cf.spendingCents - cf.plannedOutCents - cf.loanRepaymentCents + cf.extraCents + cf.fhssReleaseCents
     months.push({ month: mk, fy, ...totals(), balances: Object.fromEntries(bal), cashflow: cf, trace, pins })
   }
 
@@ -393,5 +485,6 @@ export function runProjection(input: ProjectionInput): Projection {
     depositAccountIds: depositIds,
     warnings,
     extrapolatedFys: [...extrapolated].sort(),
+    fhss: fhssReleases,
   }
 }

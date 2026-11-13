@@ -2,8 +2,8 @@ import Link from 'next/link'
 import type { Route } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { fetchPlanData, buildPlan } from '@/lib/projection/load'
-import { diffAssumptions, diffHouse } from '@/lib/projection/scenarios'
-import { ASSUMPTIONS, type AssumptionKey } from '@/lib/assumptions'
+import { diffAssumptions, diffHouse, diffPersonAssumptions } from '@/lib/projection/scenarios'
+import { ASSUMPTIONS, PERSON_ASSUMPTIONS, personAssumptionKey, type AssumptionKey, type PersonAssumptionBase } from '@/lib/assumptions'
 import { Caveat } from '@/components/planUi'
 import ScenarioList, { type ScenarioCard } from './ScenarioList'
 
@@ -30,13 +30,21 @@ export default async function ScenariosPage() {
       parentName: data.scenarios.find(p => p.id === s.parent_scenario_id)?.name ?? null,
       diffs: s.is_baseline ? [] : [
         ...diffAssumptions(baseline.assumptions, plan.assumptions).map(d => `${d.label}: ${d.from} → ${d.to}`),
+        ...diffPersonAssumptions(baseline.personAssumptions, plan.personAssumptions, baseline.people).map(d => `${d.label}: ${d.from} → ${d.to}`),
         ...diffHouse(houseOf(baseline), houseOf(plan)).map(d => `${d.field}: ${d.from} → ${d.to}`),
         ...plan.leaves.filter(l => l.scenarioId).map(l => l.name),
       ],
-      assumptions: (Object.keys(ASSUMPTIONS) as AssumptionKey[]).map(k => ({
-        key: k, label: ASSUMPTIONS[k].label, unit: ASSUMPTIONS[k].unit,
-        value: plan.assumptions[k].value, own: own.has(k),
-      })),
+      assumptions: [
+        ...(Object.keys(ASSUMPTIONS) as AssumptionKey[]).map(k => ({
+          key: k, label: ASSUMPTIONS[k].label, unit: ASSUMPTIONS[k].unit,
+          value: plan.assumptions[k].value, own: own.has(k),
+        })),
+        // Per-person salary sacrifice, so a scenario can compare with / without (birth months are facts, kept on the baseline).
+        ...baseline.people.flatMap(p => (['salary_sacrifice'] as PersonAssumptionBase[]).map(b => ({
+          key: personAssumptionKey(b, p.key), label: `${p.name}: ${PERSON_ASSUMPTIONS[b].label.toLowerCase()}`, unit: PERSON_ASSUMPTIONS[b].unit,
+          value: plan.personAssumptions[p.key]?.[b].value ?? 0, own: own.has(personAssumptionKey(b, p.key)),
+        }))),
+      ],
       house: plan.house ? {
         own: plan.house.scenarioId === s.id || (s.is_baseline && plan.house.scenarioId === null),
         month: plan.house.date.slice(0, 7), priceCents: plan.house.house.priceCents, upfrontCents: plan.house.house.upfrontCents,

@@ -24,6 +24,7 @@ const GROUPS: { key: string; title: string; kinds: TraceKind[] }[] = [
   { key: 'pay', title: 'Pay', kinds: ['income', 'tax', 'super'] },
   { key: 'spending', title: 'Spending', kinds: ['spending'] },
   { key: 'planned', title: 'Planned items', kinds: ['planned', 'transfer'] },
+  { key: 'fhss', title: 'FHSS release (estimate)', kinds: ['fhss'] },
   { key: 'loans', title: 'Loans', kinds: ['loan'] },
   { key: 'growth', title: 'Interest & growth', kinds: ['interest', 'growth', 'fees'] },
   { key: 'events', title: 'Life events', kinds: ['event'] },

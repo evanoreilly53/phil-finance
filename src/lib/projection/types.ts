@@ -67,6 +67,32 @@ export type ProjCashflow = {
   accountId: string | null
   toAccountId: string | null
   eventId: string | null
+  /** A voluntary concessional contribution (Track › Income › Super cap): counts toward the cap. */
+  concessional?: boolean
+}
+
+/** Phase 5: voluntary pre-tax salary sacrifice to super, per person (a yearly amount). */
+export type SacrificePlan = { personKey: string; annualCents: number }
+
+/**
+ * Phase 5: First Home Super Saver in the projection. Salary sacrifice made
+ * before `requestMonth` counts toward FHSS (within the yearly and lifetime
+ * limits); deemed earnings accrue to then; the release (less withdrawal tax)
+ * lands in the savings account in `releaseMonth`.
+ */
+export type FhssPlan = { requestMonth: string; releaseMonth: string; sicRatePct?: number }
+
+export type FhssRelease = {
+  personKey: string
+  name: string
+  month: string
+  countedCents: number
+  /** 85% of counted contributions. */
+  releasableContribCents: number
+  deemedEarningsCents: number
+  releasedCents: number
+  taxCents: number
+  netCents: number
 }
 
 export type HouseParams = {
@@ -145,11 +171,15 @@ export type ProjectionInput = {
   extraMonthlyCents?: number
   /** e.g. ['house_purchase'] to ask "when would we reach the deposit?" */
   excludeEventKinds?: string[]
+  /** Phase 5: salary sacrifice per person (reduces taxable pay; taxed 15% into super). */
+  sacrifice?: SacrificePlan[]
+  /** Phase 5: release FHSS-counted sacrifice for the house (null/absent = FHSS off). */
+  fhss?: FhssPlan | null
 }
 
 export type TraceKind =
   | 'income' | 'tax' | 'super' | 'spending' | 'planned' | 'event'
-  | 'interest' | 'growth' | 'fees' | 'loan' | 'transfer' | 'extra'
+  | 'interest' | 'growth' | 'fees' | 'loan' | 'transfer' | 'extra' | 'fhss'
 
 export type TraceEntry = {
   kind: TraceKind
@@ -182,6 +212,10 @@ export type CashflowSummary = {
   propertyGrowthCents: number
   eventCostsCents: number
   extraCents: number
+  /** Gross pay salary-sacrificed to super this month (already out of take-home). */
+  sacrificeCents: number
+  /** FHSS money released into cash this month, after withdrawal tax. */
+  fhssReleaseCents: number
   /** Cash left over after everything paid in cash (take-home + other income − spending − planned − repayments + extra). */
   netCashCents: number
 }
@@ -215,4 +249,6 @@ export type Projection = {
   warnings: string[]
   /** FYs where tax settings were carried forward from the last known year. */
   extrapolatedFys: FyKey[]
+  /** Phase 5: FHSS releases modelled (one per person with counted contributions). */
+  fhss: FhssRelease[]
 }

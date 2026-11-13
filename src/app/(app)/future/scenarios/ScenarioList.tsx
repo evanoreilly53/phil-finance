@@ -7,6 +7,7 @@ import { Copy, Archive, Plus, Sparkles, ChevronDown } from 'lucide-react'
 import { fmtAUD } from '@/lib/format'
 import { PROPERTY_KINDS, type PropertyKind } from '@/lib/house/duty'
 import { inputCls } from '@/components/planUi'
+import { unitSuffix, type AssumptionUnit } from '@/lib/assumptions'
 import {
   archiveScenario, createScenario, duplicateScenario, renameScenario, resetScenarioHouse,
   saveScenarioAssumptions, saveScenarioHouse, saveScenarioLeave, seedExampleScenarios,
@@ -19,7 +20,7 @@ export type ScenarioCard = {
   isBaseline: boolean
   parentName: string | null
   diffs: string[]
-  assumptions: { key: string; label: string; unit: 'pct' | 'rate' | 'aud'; value: number; own: boolean }[]
+  assumptions: { key: string; label: string; unit: AssumptionUnit; value: number; own: boolean }[]
   house: { own: boolean; month: string; priceCents: number; upfrontCents: number; kind: PropertyKind; firstHome: boolean; useScheme: boolean } | null
   leave: { personKey: string; date: string; endDate: string; payPct: number } | null
 }
@@ -126,7 +127,7 @@ function Editor({ c, people }: { c: ScenarioCard; people: Person[] }) {
         <div className="grid grid-cols-2 gap-2">
           {c.assumptions.map(a => (
             <label key={a.key} className="text-[11px] text-gray-400 space-y-1">
-              <span>{a.label}{a.unit === 'pct' ? ' (%)' : a.unit === 'aud' ? ' ($/mo)' : ''}</span>
+              <span>{a.label}{unitSuffix(a.unit)}</span>
               <input inputMode="decimal" className={inputCls} placeholder={String(a.value)} value={vals[a.key] ?? ''} onChange={e => setVals(v => ({ ...v, [a.key]: e.target.value }))} />
             </label>
           ))}

@@ -114,6 +114,7 @@ export function selectCashflows(rows: readonly CashflowRow[], opts: { today: str
       amountCents: r.amount_cents, currency: r.currency, frequency: r.frequency,
       startDate: r.start_date, endDate: r.end_date, indexation: r.indexation, indexationPct: r.indexation_pct,
       accountId: r.account_id, toAccountId: r.to_account_id, eventId: r.event_id,
+      ...(r.kind === 'super_contribution' && r.source_table === 'super_concessional' ? { concessional: true } : {}),
     })
   }
   return { salaries, cashflows, skipped }

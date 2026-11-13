@@ -7,7 +7,7 @@
 //     which REPLACES the shared one),
 //   • its own extra events (e.g. leave) and planned items.
 
-import { ASSUMPTIONS, type AssumptionKey, type ResolvedAssumption } from '../assumptions'
+import { ASSUMPTIONS, PERSON_ASSUMPTIONS, type AssumptionKey, type ResolvedAssumption } from '../assumptions'
 import { runProjection } from './engine'
 import { hitMonth } from './goals'
 import { monthDiff } from './schedule'
@@ -57,6 +57,11 @@ export type ScenarioSummary = {
   lowestCash: { month: string; cents: number } | null
   /** Mortgage interest from the purchase to `atMonth`. */
   interestToAtCents: number
+  /** Phase 5: salary sacrifice a year (all people) and the FHSS release landing in cash, after tax. */
+  sacrificeAnnualCents: number
+  fhssNetCents: number
+  /** Phase 5: total super at `atMonth`. */
+  superAtCents: number | null
   warnings: string[]
 }
 
@@ -100,8 +105,29 @@ export function summariseScenario(input: ProjectionInput, house: { date: string;
     costsCents: house?.params.costsCents ?? null,
     depositReadyMonth, depositMonthsLate, loanCents, monthlyRepaymentCents: repayment,
     netWorthAtCents: at?.netWorthCents ?? null, liquidAtCents: at?.liquidCents ?? null, atMonth: at?.month ?? atMonth,
-    lowestCash: lowest, interestToAtCents: interest, warnings: p.warnings,
+    lowestCash: lowest, interestToAtCents: interest,
+    sacrificeAnnualCents: (input.sacrifice ?? []).reduce((s, x) => s + x.annualCents, 0),
+    fhssNetCents: p.fhss.reduce((s, r) => s + r.netCents, 0),
+    superAtCents: at?.superCents ?? null,
+    warnings: p.warnings,
   }
+}
+
+export type PersonAssumptionDiff = { key: string; label: string; from: number; to: number }
+
+/** Per-person assumptions (salary sacrifice, birth month) that differ from the reference. */
+export function diffPersonAssumptions(
+  ref: Record<string, Record<string, ResolvedAssumption>>, s: Record<string, Record<string, ResolvedAssumption>>,
+  people: readonly { key: string; name: string }[],
+): PersonAssumptionDiff[] {
+  const out: PersonAssumptionDiff[] = []
+  for (const p of people) {
+    for (const [base, def] of Object.entries(PERSON_ASSUMPTIONS)) {
+      const a = ref[p.key]?.[base]?.value ?? def.default, b = s[p.key]?.[base]?.value ?? def.default
+      if (a !== b) out.push({ key: `${base}__${p.key}`, label: `${p.name}: ${def.label.toLowerCase()}`, from: a, to: b })
+    }
+  }
+  return out
 }
 
 /** Interest charged on a loan account in a month (positive). Repayments are the in-leg with no NW effect. */

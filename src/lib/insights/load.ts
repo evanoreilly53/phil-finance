@@ -10,7 +10,7 @@ import { addMonths } from '@/lib/format'
 import { addDays } from '@/lib/import/dates'
 import { fetchPlanData, buildPlan, depositGoal, depositGoalInput, type DepositGoal, type Plan } from '@/lib/projection/load'
 import { loadAccountFreshness, type AccountFreshness } from '@/lib/freshnessData'
-import { fhssTimeline } from '@/lib/house/fhss'
+import { fhssProjectionMonths, fhssTimeline } from '@/lib/house/fhss'
 import { detectSubscriptions, type Subscription } from '@/lib/subscriptions/detect'
 import type { SubscriptionMark } from '@/lib/subscriptions/bills'
 import { CONCESSIONAL_SOURCE, contributionsInFy, type ConcessionalRow } from '@/lib/superCap'
@@ -31,6 +31,19 @@ export type CheckinData = {
   statesAvailable: boolean
   freshness: AccountFreshness[]
   concessionalRows: ConcessionalRow[]
+}
+
+/**
+ * The plan's salary sacrifice (More › Assumptions) still to come this FY: the
+ * yearly amount for the months from the first projected month to 30 June.
+ */
+export function plannedSacrificeThisFy(plan: Plan, personKey: string): number {
+  const annual = Math.round((plan.personAssumptions[personKey]?.salary_sacrifice.value ?? 0) * 100)
+  if (annual <= 0) return 0
+  const start = plan.input.startMonth
+  const m = Number(start.slice(5, 7))
+  const monthsLeft = m >= 7 ? 19 - m : 7 - m // first projected month through June
+  return Math.round(annual * monthsLeft / 12)
 }
 
 /** Current gross salary per person (from the plan's salary rows). */
@@ -99,7 +112,8 @@ export async function loadCheckin(supabase: Supabase, opts: { recordLog?: boolea
   const gross = grossByPerson(plan, today)
   const people: InsightPerson[] = plan.people.map(p => ({
     key: p.key, name: p.name, grossCents: gross.get(p.key) ?? 0, hasPrivateHospital: p.hasPrivateHospital, hasHecs: p.hasHecs,
-    voluntaryConcessionalCents: contributionsInFy(concessionalRows, p.key, today).reduce((s, e) => s + e.cents, 0),
+    voluntaryConcessionalCents: contributionsInFy(concessionalRows, p.key, today).reduce((s, e) => s + e.cents, 0)
+      + plannedSacrificeThisFy(plan, p.key),
   }))
 
   const eurRate = plan.fx.find(f => f.currency === 'EUR')?.rate ?? plan.input.assumptions.fx_eur_aud
@@ -120,6 +134,9 @@ export async function loadCheckin(supabase: Supabase, opts: { recordLog?: boolea
     house: h ? { eventName: h.name, date: h.date, priceCents: h.house.priceCents, cashCents: h.house.upfrontCents, firstHome: h.house.firstHome, kind: h.house.propertyKind, useScheme: h.house.useScheme } : null,
     people,
     fhssReleaseMonth: h ? fhssTimeline(h.date.slice(0, 7), today).requestBy : null,
+    fhssMonths: h && h.status === 'planned' && h.house.firstHome && fhssProjectionMonths(h.date.slice(0, 7)).requestMonth > plan.input.startMonth
+      ? fhssProjectionMonths(h.date.slice(0, 7)) : null,
+    fhssOn: plan.fhss.on,
     subscriptions,
     subscriptionMarks: subscriptionMarks(states.rows),
     plannedEur: plannedRows.filter(r => r.currency === 'EUR' && r.kind === 'expense' && r.status === 'planned')

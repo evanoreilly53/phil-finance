@@ -7,14 +7,19 @@ import type { FyKey } from '@/lib/tax/config'
 import { saveAssumptions, saveHouse, savePersonFlags, saveSalary } from './actions'
 import { purchase } from '@/lib/house/purchase'
 import type { PropertyKind } from '@/lib/house/duty'
+import { unitSuffix, type AssumptionUnit } from '@/lib/assumptions'
 
-export type AssumptionField = { key: string; label: string; unit: 'pct' | 'rate' | 'aud'; min: number; max: number; value: number; isDefault: boolean }
+export type AssumptionField = { key: string; label: string; unit: AssumptionUnit; min: number; max: number; value: number; isDefault: boolean }
 export type HouseForm = {
   eventId: string; name: string; month: string
   priceCents: number; upfrontCents: number; costsCents: number | null; firstHome: boolean; propertyKind: PropertyKind; useScheme: boolean
   rentMonthlyCents: number; loanTermMonths: number; depositAccountIds: string[]
 }
-export type PersonForm = { key: string; name: string; hasPrivateHospital: boolean; hasHecs: boolean; grossAnnualCents: number; startDate: string }
+export type PersonForm = {
+  key: string; name: string; hasPrivateHospital: boolean; hasHecs: boolean; grossAnnualCents: number; startDate: string
+  /** Phase 5: yearly salary sacrifice (whole dollars) and birth month (YYYYMM, 0 = not set). */
+  sacrificeDollars: number; birthMonth: number
+}
 
 type Props = {
   scenarioName: string | null
@@ -24,6 +29,10 @@ type Props = {
   accounts: { id: string; name: string; type: string; currency: string }[]
   people: PersonForm[]
   fy: FyKey
+  /** Phase 5: FHSS switched on in the baseline, and why it might not apply. */
+  fhss: { on: boolean; note: string | null; releaseMonth: string | null }
+  /** Voluntary concessional contributions entered on Track › Income this FY, per person (cents). */
+  enteredConcessional: Record<string, number>
 }
 
 const input = 'w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white tabular-nums focus:outline-none focus:border-indigo-500'
@@ -81,7 +90,7 @@ function useSave() {
   return { pending, error, saved, run, setError }
 }
 
-export default function AssumptionsForm({ scenarioName, fields, house, oldGoal, accounts, people, fy }: Props) {
+export default function AssumptionsForm({ scenarioName, fields, house, oldGoal, accounts, people, fy, fhss, enteredConcessional }: Props) {
   return (
     <div className="space-y-4 pb-4">
       <p className="text-xs text-gray-400 px-1">
@@ -93,6 +102,7 @@ export default function AssumptionsForm({ scenarioName, fields, house, oldGoal, 
         {people.length === 0 && <p className="text-sm text-gray-400">No people set up yet (run migration 0008).</p>}
         {people.map(p => <PersonBlock key={p.key} person={p} partnerGross={people.filter(x => x.key !== p.key).reduce((s, x) => s + x.grossAnnualCents, 0)} fy={fy} />)}
       </Section>
+      {people.length > 0 && <SuperSection people={people} fy={fy} fhss={fhss} enteredConcessional={enteredConcessional} disabled={!scenarioName} />}
       <RatesSection fields={fields} disabled={!scenarioName} />
     </div>
   )
@@ -230,7 +240,7 @@ function RatesSection({ fields, disabled }: { fields: AssumptionField[]; disable
     <Section title="Rates" hint="Yearly rates. Pay and prices step up each 1 July; returns compound monthly. An account's own rate (Track › Accounts) overrides these.">
       <div className="grid grid-cols-2 gap-3">
         {fields.map(f => (
-          <Field key={f.key} id={`a-${f.key}`} label={`${f.label}${f.unit === 'pct' ? ' (%)' : f.unit === 'aud' ? ' ($/mo)' : ''}`} hint={fieldErrors[f.key] ?? (f.isDefault ? 'App default' : undefined)}>
+          <Field key={f.key} id={`a-${f.key}`} label={`${f.label}${unitSuffix(f.unit)}`} hint={fieldErrors[f.key] ?? (f.isDefault ? 'App default' : undefined)}>
             <input id={`a-${f.key}`} inputMode="decimal" disabled={disabled} aria-invalid={!!fieldErrors[f.key]}
               className={`${input} ${fieldErrors[f.key] ? 'border-red-500' : ''}`}
               value={values[f.key]} onChange={e => setValues(v => ({ ...v, [f.key]: e.target.value }))} />
@@ -238,6 +248,73 @@ function RatesSection({ fields, disabled }: { fields: AssumptionField[]; disable
         ))}
       </div>
       <SaveRow pending={pending} error={error} saved={saved} onSave={save} label="Save rates" />
+    </Section>
+  )
+}
+
+const yyyymmToMonth = (v: number) => (v >= 190001 ? `${Math.floor(v / 100)}-${String(v % 100).padStart(2, '0')}` : '')
+const monthToYyyymm = (s: string) => (/^\d{4}-\d{2}$/.test(s) ? String(Number(s.slice(0, 4)) * 100 + Number(s.slice(5, 7))) : '0')
+
+/** Phase 5: salary sacrifice per person, FHSS on/off, birth months (for super to 60). */
+function SuperSection({ people, fy, fhss, enteredConcessional, disabled }: { people: PersonForm[]; fy: FyKey; fhss: Props['fhss']; enteredConcessional: Props['enteredConcessional']; disabled: boolean }) {
+  const [sac, setSac] = useState<Record<string, string>>(Object.fromEntries(people.map(p => [p.key, p.sacrificeDollars ? String(p.sacrificeDollars) : ''])))
+  const [born, setBorn] = useState<Record<string, string>>(Object.fromEntries(people.map(p => [p.key, yyyymmToMonth(p.birthMonth)])))
+  const [useFhss, setUseFhss] = useState(fhss.on)
+  const s = useSave()
+
+  function save() {
+    const values: Record<string, string> = { fhss_use: useFhss ? '1' : '0' }
+    for (const p of people) {
+      const t = (sac[p.key] ?? '').replace(/[$,\s]/g, '')
+      values[`salary_sacrifice__${p.key}`] = t === '' ? '0' : t
+      values[`birth_month__${p.key}`] = monthToYyyymm(born[p.key] ?? '')
+    }
+    s.run(async () => {
+      const r = await saveAssumptions(values)
+      return r.fieldErrors ? { error: Object.values(r.fieldErrors).join('; ') } : r
+    })
+  }
+
+  return (
+    <Section title="Salary sacrifice, FHSS and super" hint={`Pre-tax pay put into super each year. It lowers take-home pay and income tax; super gets it less 15% contributions tax. Capped at what's left of the ${fy} concessional cap after employer super. Estimates, not advice.`}>
+      {people.map(p => {
+        const sacC = Math.round(Number((sac[p.key] ?? '').replace(/[$,\s]/g, '') || 0) * 100)
+        const base = p.grossAnnualCents > 0 ? annualTakeHome({ grossCents: p.grossAnnualCents, hasPrivateHospital: p.hasPrivateHospital, hasHecs: p.hasHecs }, fy) : null
+        const room = base ? Math.max(0, base.capHeadroomCents - (enteredConcessional[p.key] ?? 0)) : 0
+        const used = Math.min(Number.isFinite(sacC) ? sacC : 0, room)
+        const withSac = base && used > 0 ? annualTakeHome({ grossCents: p.grossAnnualCents, salarySacrificeCents: used, hasPrivateHospital: p.hasPrivateHospital, hasHecs: p.hasHecs }, fy) : null
+        return (
+          <div key={p.key} className="border-t border-gray-800 pt-3 first:border-0 first:pt-0 space-y-2">
+            <p className="text-sm text-white font-medium">{p.name}</p>
+            <div className="grid grid-cols-2 gap-3">
+              <Field id={`ss-${p.key}`} label="Salary sacrifice ($/yr)">
+                <input id={`ss-${p.key}`} inputMode="decimal" disabled={disabled} className={input} value={sac[p.key] ?? ''} placeholder="0" onChange={e => setSac(v => ({ ...v, [p.key]: e.target.value }))} />
+              </Field>
+              <Field id={`bm-${p.key}`} label="Born (month)" hint="For super at 60">
+                <input id={`bm-${p.key}`} type="month" disabled={disabled} className={input} value={born[p.key] ?? ''} onChange={e => setBorn(v => ({ ...v, [p.key]: e.target.value }))} />
+              </Field>
+            </div>
+            {!base ? <p className="text-[11px] text-gray-500">Add a gross salary above to see the effect.</p> : (
+              <p className="text-[11px] text-gray-400 leading-relaxed">
+                Cap room {fmtAUD(room)} in {fy} (cap {fmtAUD(base.concessionalCapCents)} less {fmtAUD(base.sgCents)} employer super{enteredConcessional[p.key] ? ` and ${fmtAUD(enteredConcessional[p.key])} entered on Track › Income` : ''}).
+                {sacC > room && <span className="text-amber-300"> The projection caps this at {fmtAUD(room)}.</span>}
+                {withSac && <> Take-home {fmtAUD(Math.round((base.netCents - withSac.netCents) / 12))}/mo less; super {fmtAUD(Math.round(used * 0.85 / 12))}/mo more after contributions tax; {fmtAUD(base.totalTaxCents - withSac.totalTaxCents)}/yr less income tax.</>}
+              </p>
+            )}
+          </div>
+        )
+      })}
+      <label className="flex items-start gap-2 text-sm text-gray-200">
+        <input type="checkbox" className="accent-indigo-500 mt-0.5" disabled={disabled} checked={useFhss} onChange={e => setUseFhss(e.target.checked)} />
+        <span>
+          Use FHSS for the house
+          <span className="block text-[11px] text-gray-500">
+            Salary sacrifice counts toward the First Home Super Saver scheme (up to $15,000 a year, $50,000 in total each). 85% of it plus deemed earnings is released, less tax at your marginal rate minus a 30% offset, into savings{fhss.releaseMonth ? ` in ${monthLabel(fhss.releaseMonth, { month: 'short', year: 'numeric' })}` : ''}, the month before you buy. Scenarios can switch this off to compare.
+          </span>
+          {fhss.on && fhss.note && <span className="block text-[11px] text-amber-300">{fhss.note}</span>}
+        </span>
+      </label>
+      <SaveRow {...s} onSave={save} label="Save super settings" />
     </Section>
   )
 }

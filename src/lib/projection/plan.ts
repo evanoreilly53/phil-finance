@@ -2,7 +2,8 @@
 // fetch (load.ts) can build several scenarios for the side-by-side comparison.
 
 import { latestBalanceByAccount } from '@/lib/balances'
-import { resolveAssumptions, ASSUMPTIONS, type AssumptionKey, type ResolvedAssumption } from '@/lib/assumptions'
+import { resolveAssumptions, resolvePersonAssumptions, ASSUMPTIONS, type AssumptionKey, type PersonAssumptions, type ResolvedAssumption } from '@/lib/assumptions'
+import { fhssProjectionMonths } from '@/lib/house/fhss'
 import { addMonths } from '@/lib/format'
 import { chooseRate } from '@/lib/fx'
 import {
@@ -29,6 +30,10 @@ export type Plan = {
   skipped: Skipped[]
   fx: { currency: string; rate: number; date: string | null; source: 'stored' | 'fallback' | 'assumption' }[]
   incomeNote: string
+  /** Phase 5: per-person assumptions (salary sacrifice, birth month). */
+  personAssumptions: Record<string, PersonAssumptions>
+  /** Phase 5: whether FHSS is in this plan's projection, and why not when it isn't. */
+  fhss: { on: boolean; wanted: boolean; requestMonth: string | null; releaseMonth: string | null; note: string | null }
 }
 
 export type HouseholdMember = { key: string; label: string; income_cents: number }
@@ -131,9 +136,29 @@ export function buildPlan(d: PlanData, opts: { months?: number; scenarioId?: str
     else if (choice) { fx[cur] = choice.rate; fxInfo.push({ currency: cur, rate: choice.rate, date: null, source: 'fallback' }) }
   }
 
+  // ── Salary sacrifice + FHSS (Phase 5) ──────────────────────────────────────
+  const personAssumptions = resolvePersonAssumptions(scenario?.id ?? '', d.scenarios, d.assumptionRows, projPeople.map(p => p.key))
+  const sacrifice = projPeople
+    .map(p => ({ personKey: p.key, annualCents: Math.round((personAssumptions[p.key]?.salary_sacrifice.value ?? 0) * 100) }))
+    .filter(s => s.annualCents > 0)
+  const startMonth = addMonths(d.thisMonth, 1)
+  const fhssWanted = a.fhss_use === 1
+  let fhss: Plan['fhss'] = { on: false, wanted: fhssWanted, requestMonth: null, releaseMonth: null, note: null }
+  if (fhssWanted) {
+    const hm = house?.date.slice(0, 7) ?? null
+    const months = hm ? fhssProjectionMonths(hm) : null
+    const note = !house ? 'No house purchase in this plan.'
+      : house.status !== 'planned' ? 'The house is marked as bought.'
+      : !house.house.firstHome ? 'FHSS is for first-home buyers only.'
+      : months!.requestMonth <= startMonth ? 'The house month is too close for an FHSS release.'
+      : sacrifice.length === 0 ? 'No salary sacrifice set: add one per person in Assumptions.'
+      : null
+    fhss = { on: note === null || note.startsWith('No salary'), wanted: true, requestMonth: months?.requestMonth ?? null, releaseMonth: months?.releaseMonth ?? null, note }
+  }
+
   const input: ProjectionInput = {
     today: d.today,
-    startMonth: addMonths(d.thisMonth, 1),
+    startMonth,
     months: opts.months ?? 60,
     assumptions: a,
     accounts: projAccounts,
@@ -147,6 +172,8 @@ export function buildPlan(d: PlanData, opts: { months?: number; scenarioId?: str
     sweepAccountId: chooseSweepAccount(projAccounts),
     depositAccountIds: (house && depositAccountIdsFromParams(house.params)) ?? defaultDepositAccountIds(projAccounts),
     extraMonthlyCents: Math.round((a.extra_saving_monthly ?? 0) * 100),
+    ...(sacrifice.length ? { sacrifice } : {}),
+    ...(fhss.on ? { fhss: { requestMonth: fhss.requestMonth!, releaseMonth: fhss.releaseMonth! } } : {}),
   }
 
   return {
@@ -161,6 +188,8 @@ export function buildPlan(d: PlanData, opts: { months?: number; scenarioId?: str
     skipped: sel.skipped,
     fx: fxInfo,
     incomeNote,
+    personAssumptions,
+    fhss,
   }
 }
 

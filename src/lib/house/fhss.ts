@@ -155,6 +155,15 @@ function empty(sic: number, warnings: string[]): FhssResult {
   }
 }
 
+/**
+ * FHSS months the projection uses for a purchase in `signMonth`: request the
+ * determination and release two months before (contributions and deemed
+ * earnings count to then), money lands one month before signing.
+ */
+export function fhssProjectionMonths(signMonth: string): { requestMonth: string; releaseMonth: string } {
+  return { requestMonth: addMonthsKey(signMonth, -2), releaseMonth: addMonthsKey(signMonth, -1) }
+}
+
 /** Key dates for using FHSS on a purchase in `signMonth`. */
 export function fhssTimeline(signMonth: string, today: string) {
   // Request the determination and release about two months before signing (release takes ~15–20 business days).

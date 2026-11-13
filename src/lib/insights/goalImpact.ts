@@ -30,6 +30,11 @@ export function depositHitDay(p: Projection, targetCents: number): number | null
 /** The projection input with an insight's effect applied. */
 export function withEffect(input: ProjectionInput, effect: DepositEffect): ProjectionInput {
   if ('monthlyCents' in effect) return { ...input, extraMonthlyCents: (input.extraMonthlyCents ?? 0) + effect.monthlyCents }
+  if ('sacrifice' in effect) {
+    const by = new Map((input.sacrifice ?? []).map(s => [s.personKey, s.annualCents]))
+    for (const s of effect.sacrifice) by.set(s.personKey, (by.get(s.personKey) ?? 0) + s.annualCents)
+    return { ...input, sacrifice: [...by].map(([personKey, annualCents]) => ({ personKey, annualCents })), fhss: input.fhss ?? effect.fhss }
+  }
   const oneOff: ProjCashflow = {
     id: 'insight:one-off', description: 'Insight what-if', kind: effect.oneOffCents >= 0 ? 'income' : 'expense', personKey: null,
     amountCents: Math.abs(effect.oneOffCents), currency: 'AUD', frequency: 'once', startDate: monthStart(input.startMonth), endDate: null,

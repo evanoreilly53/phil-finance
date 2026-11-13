@@ -17,7 +17,11 @@ export type Evidence =
   | { kind: 'row'; label: string; value: string }
 
 /** How acting on an insight would change cash toward the deposit. Fed to the projection engine. */
-export type DepositEffect = { monthlyCents: number } | { oneOffCents: number }
+export type DepositEffect =
+  | { monthlyCents: number }
+  | { oneOffCents: number }
+  /** Phase 5: extra yearly salary sacrifice per person, counted toward FHSS and released for the house. */
+  | { sacrifice: { personKey: string; annualCents: number }[]; fhss: { requestMonth: string; releaseMonth: string } }
 
 export type Insight = {
   /** Stable key: Done / Snooze / "That's intentional" attach to it. */
@@ -107,6 +111,10 @@ export type InsightContext = {
   people: InsightPerson[]
   /** When FHSS money would be released for the house (House › FHSS timeline). */
   fhssReleaseMonth: string | null
+  /** Phase 5: the projection's FHSS months for the house (request, money lands); null without a future first-home plan. */
+  fhssMonths?: { requestMonth: string; releaseMonth: string } | null
+  /** Phase 5: FHSS is already switched on in the plan. */
+  fhssOn?: boolean
   subscriptions: Subscription[]
   subscriptionMarks: SubscriptionMark[]
   /** Future planned outflows in EUR (still to pay). */

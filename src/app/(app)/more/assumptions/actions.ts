@@ -8,7 +8,7 @@ import type { Json } from '@/lib/supabase/database.types'
 
 type Result = { error?: string; fieldErrors?: Record<string, string> }
 
-const PLAN_PATHS = ['/more/assumptions', '/future', '/dashboard', '/goals', '/networth', '/income']
+const PLAN_PATHS = ['/more/assumptions', '/future', '/dashboard', '/goals', '/networth', '/income', '/house', '/insights']
 function revalidatePlan() { for (const p of PLAN_PATHS) revalidatePath(p) }
 
 async function auth() {
