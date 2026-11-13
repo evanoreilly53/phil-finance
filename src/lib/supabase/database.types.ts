@@ -1,4 +1,4 @@
-// Hand-crafted from supabase/schema.sql + migrations 0001–0008 — regenerate with:
+// Hand-crafted from supabase/schema.sql + migrations 0001–0010 — regenerate with:
 // npx supabase gen types typescript --project-id ujxsdoqqfmnvbpesesmd > src/lib/supabase/database.types.ts
 // (requires: supabase login or SUPABASE_ACCESS_TOKEN)
 
@@ -12,7 +12,9 @@ export type ReviewFlag = 'suspected_transfer' | 'suspected_duplicate'
 export type LifeEventKind = 'house_purchase' | 'wedding' | 'travel' | 'leave' | 'income_change' | 'one_off' | 'other'
 export type LifeEventStatus = 'planned' | 'done' | 'cancelled'
 export type CashflowKind = 'income' | 'expense' | 'transfer' | 'super_contribution'
-export type CashflowFrequency = 'once' | 'weekly' | 'fortnightly' | 'monthly' | 'quarterly' | 'annual'
+export type InsightScope = 'insight' | 'subscription'
+export type InsightStateKind = 'done' | 'snoozed' | 'intentional' | 'tracked' | 'dismissed'
+export type CashflowFrequency ='once' | 'weekly' | 'fortnightly' | 'monthly' | 'quarterly' | 'annual'
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
@@ -893,6 +895,84 @@ export type Database = {
           source_table?: string | null
           source_id?: string | null
           notes?: string | null
+          created_by?: string | null
+          created_at?: string | null
+        }
+        Relationships: []
+      }
+      insight_states: {
+        Row: {
+          id: string
+          key: string
+          scope: InsightScope
+          state: InsightStateKind
+          done_month: string | null
+          snooze_until: string | null
+          ref_id: string | null
+          note: string | null
+          created_by: string | null
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          key: string
+          scope?: InsightScope
+          state: InsightStateKind
+          done_month?: string | null
+          snooze_until?: string | null
+          ref_id?: string | null
+          note?: string | null
+          created_by?: string | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          key?: string
+          scope?: InsightScope
+          state?: InsightStateKind
+          done_month?: string | null
+          snooze_until?: string | null
+          ref_id?: string | null
+          note?: string | null
+          created_by?: string | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      checkin_log: {
+        Row: {
+          id: string
+          month: string
+          deposit_event_id: string | null
+          deposit_projected_month: string | null
+          deposit_target_month: string | null
+          deposit_target_cents: number | null
+          net_worth_cents: number | null
+          created_by: string | null
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          month: string
+          deposit_event_id?: string | null
+          deposit_projected_month?: string | null
+          deposit_target_month?: string | null
+          deposit_target_cents?: number | null
+          net_worth_cents?: number | null
+          created_by?: string | null
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          month?: string
+          deposit_event_id?: string | null
+          deposit_projected_month?: string | null
+          deposit_target_month?: string | null
+          deposit_target_cents?: number | null
+          net_worth_cents?: number | null
           created_by?: string | null
           created_at?: string | null
         }

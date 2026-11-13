@@ -13,7 +13,10 @@ export type RecurrenceFreq = 'weekly' | 'fortnightly' | 'monthly' | 'quarterly' 
  * old Settings › Recurring, and new ones added there with "already in our
  * spending" ticked.
  */
-export const RECURRING_IN_SPENDING_SOURCES: ReadonlySet<string> = new Set(['recurring_transactions', 'settings_recurring'])
+export const RECURRING_IN_SPENDING_SOURCES: ReadonlySet<string> = new Set(['recurring_transactions', 'settings_recurring', 'detected_subscription'])
+
+/** source_table for a subscription found in your transactions and tracked from the Bills view (Phase 4). */
+export const DETECTED_SUBSCRIPTION_SOURCE = 'detected_subscription'
 
 export type CashflowItemRow = {
   id: string
