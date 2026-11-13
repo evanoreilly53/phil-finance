@@ -4,6 +4,7 @@ import { fetchAll } from '@/lib/supabase/fetchAll'
 import { totalsByMonth } from '@/lib/income'
 import TrackTabs from '@/components/TrackTabs'
 import IncomeView from './IncomeView'
+import TakeHomeCard from './TakeHomeCard'
 import type { Transaction } from '../transactions/TransactionList'
 import { getSetting } from '@/lib/settings'
 
@@ -57,6 +58,7 @@ export default async function IncomePage() {
   return (
     <div className="space-y-3">
     <TrackTabs />
+    <TakeHomeCard />
     <IncomeView
       transactions={allTxs}
       spendByMonth={spendByMonth}

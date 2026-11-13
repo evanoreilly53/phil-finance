@@ -143,6 +143,8 @@ export type TraceEntry = {
   ref?: { table: 'planned_cashflows' | 'life_events' | 'accounts' | 'salary' | 'net_income' | 'spending'; id: string }
   detail?: string
   memo?: boolean
+  /** The receiving side of a move between your own accounts (the paying side carries the label). */
+  inLeg?: boolean
 }
 
 export type CashflowSummary = {

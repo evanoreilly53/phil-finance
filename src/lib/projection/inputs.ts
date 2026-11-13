@@ -158,6 +158,42 @@ export function chooseSweepAccount(accounts: readonly ProjAccount[]): string | n
 }
 
 /** Default deposit pot: everyday/savings accounts + investments, except equity stakes ("Business ..."). */
-export function defaultDepositAccountIds(accounts: readonly ProjAccount[]): string[] {
+export function defaultDepositAccountIds(accounts: readonly Pick<ProjAccount, 'id' | 'type' | 'name'>[]): string[] {
   return accounts.filter(a => CASH_TYPES.has(a.type) || (INVEST_TYPES.has(a.type) && !/business|venture/i.test(a.name))).map(a => a.id)
+}
+
+// ── Editing the house event (Assumptions form) ───────────────────────────────
+
+export type HouseEdit = {
+  priceCents: number
+  upfrontCents: number
+  /** null = use the placeholder estimate */
+  costsCents: number | null
+  rentMonthlyCents: number
+  loanTermMonths: number
+  depositAccountIds: string[]
+}
+
+/** Merge edits into the stored params, keeping keys the form doesn't own (state, first_home_buyer...). */
+export function mergeHouseParams(existing: unknown, edit: HouseEdit): Record<string, unknown> {
+  const base = existing && typeof existing === 'object' && !Array.isArray(existing) ? { ...(existing as Record<string, unknown>) } : {}
+  base.price_cents = edit.priceCents
+  base.deposit_cents = edit.upfrontCents
+  if (edit.costsCents === null) delete base.upfront_costs_cents
+  else base.upfront_costs_cents = edit.costsCents
+  base.rent_monthly_cents = edit.rentMonthlyCents
+  base.loan_term_months = edit.loanTermMonths
+  base.deposit_account_ids = edit.depositAccountIds
+  return base
+}
+
+export function validateHouseEdit(e: HouseEdit): string | null {
+  const ok = (n: number) => Number.isSafeInteger(n) && n >= 0
+  if (!ok(e.priceCents) || e.priceCents === 0) return 'Enter a price'
+  if (!ok(e.upfrontCents)) return 'Enter the upfront amount'
+  if (e.upfrontCents > e.priceCents) return 'Upfront cash can’t be more than the price'
+  if (e.costsCents !== null && (!ok(e.costsCents) || e.costsCents > e.upfrontCents)) return 'Duty + costs must be part of the upfront amount'
+  if (!ok(e.rentMonthlyCents)) return 'Rent must be zero or more'
+  if (!Number.isInteger(e.loanTermMonths) || e.loanTermMonths < 12 || e.loanTermMonths > 600) return 'Loan term must be 1–50 years'
+  return null
 }

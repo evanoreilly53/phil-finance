@@ -275,12 +275,12 @@ export function runProjection(input: ProjectionInput): Projection {
       } else if (c.kind === 'transfer') {
         if (!c.toAccountId || !byId.has(c.toAccountId)) { warnOnce(`"${c.description}" moves money to an account that no longer exists, so it's left out.`); continue }
         move(own(c.accountId), -aud, { kind: 'transfer', label: `${label} → ${nameOf(c.toAccountId)}`, nwCents: 0, ref, detail })
-        move(c.toAccountId, aud, { kind: 'transfer', label: `${label} ← ${nameOf(own(c.accountId))}`, nwCents: 0, ref, detail })
+        move(c.toAccountId, aud, { kind: 'transfer', label: `${label} ← ${nameOf(own(c.accountId))}`, nwCents: 0, ref, detail, inLeg: true })
       } else {
         const target = c.accountId && byId.get(c.accountId)?.type === 'super' ? c.accountId : c.personKey ? superAccountFor(c.personKey) : null
         if (!target) { warnOnce(`"${c.description}" has no person or super account, so it's left out.`); continue }
         move(sweep, -aud, { kind: 'super', label: `${label} → ${nameOf(target)}`, nwCents: 0, ref, detail: 'After-tax contribution (no contributions tax modelled)' })
-        move(target, aud, { kind: 'super', label, nwCents: 0, ref })
+        move(target, aud, { kind: 'super', label, nwCents: 0, ref, inLeg: true })
       }
     }
 
@@ -301,7 +301,7 @@ export function runProjection(input: ProjectionInput): Projection {
       const pay = Math.min(due, owed)
       if (pay <= 0) continue
       move(sweep, -pay, { kind: 'loan', label: `Repayment: ${x.name}`, nwCents: 0, ref: { table: 'accounts', id: x.id } })
-      move(x.id, pay, { kind: 'loan', label: `Repayment from ${nameOf(sweep)}`, nwCents: 0, ref: { table: 'accounts', id: x.id } })
+      move(x.id, pay, { kind: 'loan', label: `Repayment from ${nameOf(sweep)}`, nwCents: 0, ref: { table: 'accounts', id: x.id }, inLeg: true })
       cf.loanRepaymentCents += pay
     }
 

@@ -1,339 +1,117 @@
-import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
-import { fmtAUD, fmtDate, perthMonthKey, addMonths, daysUntilPerth, monthKey, monthLabel } from '@/lib/format'
 import type { Route } from 'next'
-import AdviceCards, { type AdviceCard } from '@/components/AdviceCards'
-import { getSetting } from '@/lib/settings'
+import { ClipboardCheck, TrendingDown, TrendingUp } from 'lucide-react'
+import { createClient } from '@/lib/supabase/server'
 import { fetchAll } from '@/lib/supabase/fetchAll'
-import { latestBalanceByAccount, currentNetWorthCents, netWorthSeries, accountDeltas } from '@/lib/balances'
+import { fmtAUD, monthLabel, perthMonthKey, addMonths } from '@/lib/format'
+import { currentNetWorthCents, monthlyNetWorth } from '@/lib/balances'
+import { monthSummary, netWorthChange } from '@/lib/checkin'
+import { loadPlan, depositGoal, type DepositGoal } from '@/lib/projection/load'
+import { perthToday } from '@/lib/import/dates'
+import DepositGoalCard from '@/components/DepositGoalCard'
 import NWSparkline from './NWSparkline'
-import SpendingTrend from './SpendingTrend'
 import DataHealth from './DataHealth'
+
+// Home: the monthly money check-in. One hero number (net worth), one hero goal
+// (house deposit with its projected date), this month vs budget, and the
+// data-health prompts. Insights (Phase 4) get the slot below; nothing is faked.
 
 export default async function DashboardPage() {
   const supabase = await createClient()
   const thisMonth = perthMonthKey()
-  const prevMonth = addMonths(thisMonth, -1)
   const nextMonth = addMonths(thisMonth, 1)
-  const perthToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Perth' }).format(new Date())
-  const d30 = new Date(`${perthToday}T00:00:00`)
-  d30.setDate(d30.getDate() + 30)
-  const in30Days = `${d30.getFullYear()}-${String(d30.getMonth() + 1).padStart(2, '0')}-${String(d30.getDate()).padStart(2, '0')}`
-  const sixMonthsAgo = addMonths(thisMonth, -5)
+  const today = perthToday()
 
-  const [
-    snapshots,
-    { data: accounts },
-    thisMonthTxs,
-    prevMonthTxs,
-    { data: outflows },
-    { data: weddingItems },
-    { data: dueRecurring },
-    sixMonthSpendTxs,
-    { data: outflowsNext30 },
-    MONTHLY_INCOME_CENTS,
-    PERSONAL_BUDGET_CENTS,
-    weddingBudgetCents,
-  ] = await Promise.all([
+  const [snapshots, { data: accounts }, monthTxs, { data: categories }, { data: budgets }, { data: dueRecurring }, plan] = await Promise.all([
     fetchAll((from, to) => supabase.from('account_snapshots').select('account_id, aud_balance_cents, date')
       .order('date', { ascending: true }).order('id', { ascending: true }).range(from, to)),
-    supabase.from('accounts').select('id, is_liquid, type').eq('is_active', true),
-    fetchAll((from, to) => supabase.from('transactions').select('aud_amount_cents, owner').lt('aud_amount_cents', 0).eq('is_transfer', false)
+    supabase.from('accounts').select('id').eq('is_active', true),
+    fetchAll((from, to) => supabase.from('transactions').select('date, aud_amount_cents, category_id, is_transfer')
       .gte('date', `${thisMonth}-01`).lt('date', `${nextMonth}-01`).order('id').range(from, to)),
-    fetchAll((from, to) => supabase.from('transactions').select('aud_amount_cents').lt('aud_amount_cents', 0).eq('is_transfer', false)
-      .gte('date', `${prevMonth}-01`).lt('date', `${thisMonth}-01`).order('id').range(from, to)),
-    supabase.from('planned_outflows').select('description, amount_cents, due_date, status').eq('status', 'planned').order('due_date').limit(5),
-    supabase.from('wedding_items').select('budget_aud_cents, spent_aud_cents, status'),
-    supabase.from('recurring_transactions')
-      .select('id, description, amount_cents, next_due')
-      .eq('is_active', true)
-      .lte('next_due', perthToday)
-      .order('next_due')
-      .limit(5),
-    fetchAll((from, to) => supabase.from('transactions')
-      .select('date, aud_amount_cents')
-      .lt('aud_amount_cents', 0).eq('is_transfer', false)
-      .gte('date', `${sixMonthsAgo}-01`)
-      .lt('date', `${nextMonth}-01`)
-      .order('id')
-      .range(from, to)),
-    // All planned outflows due in the next 30 days (the list above is capped at 5
-    // and includes overdue items, so it can't be used for the 30-day total)
-    supabase.from('planned_outflows').select('amount_cents').eq('status', 'planned')
-      .gte('due_date', perthToday).lte('due_date', in30Days),
-    getSetting<number>('monthly_income_cents',  1256300),
-    getSetting<number>('personal_budget_cents', 80000),
-    getSetting<number>('wedding_budget_cents',  7500000),
+    supabase.from('categories').select('id, parent_id, kind'),
+    supabase.from('budgets').select('category_id, monthly_cents, effective_from'),
+    supabase.from('recurring_transactions').select('id', { count: 'exact' }).eq('is_active', true).lte('next_due', today),
+    loadPlan(supabase).catch(() => null),
   ])
 
-  // Net worth
-  const liquidIds  = new Set((accounts ?? []).filter(a => a.is_liquid).map(a => a.id))
-  const investIds  = new Set((accounts ?? []).filter(a => a.type === 'investment').map(a => a.id))
-  // Same basis as the Net Worth page: active accounts, last known balance carried forward
-  const activeIds   = new Set((accounts ?? []).map(a => a.id))
-  const latestByAccount = latestBalanceByAccount(snapshots, { accountIds: activeIds })
-  const nw          = currentNetWorthCents(snapshots, { accountIds: activeIds })
-  const liquidBal   = [...latestByAccount.entries()]
-    .filter(([id]) => liquidIds.has(id))
-    .reduce((s, [, v]) => s + v.cents, 0)
+  // Net worth: active accounts, last known balance carried forward
+  const activeIds = new Set((accounts ?? []).map(a => a.id))
+  const nw = currentNetWorthCents(snapshots, { accountIds: activeIds })
+  const monthly = monthlyNetWorth(snapshots, { accountIds: activeIds })
+  const change = netWorthChange(monthly)
+  const spark = monthly.slice(-12).map(m => ({ date: `${m.mk}-01`, total: m.cents }))
 
-  // Sparkline: last 6 snapshot dates, each with every account carried forward
-  const sparklinePoints: { date: string; total: number }[] = netWorthSeries(snapshots, { accountIds: activeIds })
-    .slice(-6)
-    .map(p => ({ date: p.date, total: p.totalCents }))
-  const deltasByAccount = accountDeltas(snapshots, { accountIds: investIds })
+  const month = monthSummary(monthTxs, categories ?? [], budgets ?? [], thisMonth)
+  let deposit: DepositGoal | null = null
+  try { deposit = plan ? depositGoal(plan) : null } catch { deposit = null }
 
-  // Spending
-  const thisSpend   = (thisMonthTxs ?? []).reduce((s, t) => s + Math.abs(t.aud_amount_cents), 0)
-  const prevSpend   = (prevMonthTxs ?? []).reduce((s, t) => s + Math.abs(t.aud_amount_cents), 0)
-  const spendChange = prevSpend > 0 ? ((thisSpend - prevSpend) / prevSpend * 100) : null
-
-  // Personal allowance spending this month
-  const rachelSpend = (thisMonthTxs ?? []).filter(t => t.owner === 'rachel').reduce((s, t) => s + Math.abs(t.aud_amount_cents), 0)
-  const evanSpend   = (thisMonthTxs ?? []).filter(t => t.owner === 'evan').reduce((s, t) => s + Math.abs(t.aud_amount_cents), 0)
-
-  // Wedding
-  const weddingBudget    = weddingBudgetCents
-  const weddingSpent     = (weddingItems ?? []).reduce((s, i) => s + (i.spent_aud_cents ?? 0), 0)
-  const weddingEstimate  = (weddingItems ?? []).reduce((s, i) => s + (i.budget_aud_cents ?? 0), 0)
-  const weddingRemaining = weddingBudget - weddingSpent
-
-  // Next payment
-  const nextOutflow = (outflows ?? [])[0] ?? null
-  const nextDays    = nextOutflow ? daysUntilPerth(nextOutflow.due_date) : null
-
-  // 6-month spending trend
-  const spendingTrendData = (() => {
-    const monthTotals = new Map<string, number>()
-    for (const t of sixMonthSpendTxs ?? []) {
-      const mk = monthKey(t.date)
-      monthTotals.set(mk, (monthTotals.get(mk) ?? 0) + Math.abs(t.aud_amount_cents))
-    }
-    // Build ordered 6 months from sixMonthsAgo to thisMonth
-    const result: { label: string; totalSpend: number }[] = []
-    for (let i = 0; i <= 5; i++) {
-      const mk = addMonths(sixMonthsAgo, i)
-      result.push({
-        label: monthLabel(mk, { month: 'short', year: '2-digit' }),
-        totalSpend: Math.round((monthTotals.get(mk) ?? 0) / 100),
-      })
-    }
-    return result
-  })()
-
-  // 12.6 Cash-flow forecast: liquid balance − upcoming outflows in 30 days
-  const upcoming30 = outflowsNext30 ?? []
-  const outflow30Total = upcoming30.reduce((s, o) => s + o.amount_cents, 0)
-  const projectedLiquid = liquidBal - outflow30Total
-
-  // 12.4 Advice cards
-  const advice: AdviceCard[] = []
-  const savingsRate = Math.round(((MONTHLY_INCOME_CENTS - thisSpend) / MONTHLY_INCOME_CENTS) * 100)
-  if (savingsRate < 10 && thisSpend > 0) {
-    advice.push({
-      id:    'savings-low',
-      type:  'warning',
-      title: `Savings rate: ${savingsRate}%`,
-      body:  `Spending ${fmtAUD(thisSpend)} this month leaves only ${savingsRate}% of income ($${Math.round(MONTHLY_INCOME_CENTS/100).toLocaleString()}/mo). Aim for 20%+.`,
-    })
-  }
-  if (weddingEstimate > weddingBudget) {
-    advice.push({
-      id:    'wedding-over',
-      type:  'warning',
-      title: 'Wedding estimate over budget',
-      body:  `Current estimate ${fmtAUD(weddingEstimate)} exceeds the $75k ceiling by ${fmtAUD(weddingEstimate - weddingBudget)}. Review items on the Wedding page.`,
-    })
-  }
-  if (rachelSpend > PERSONAL_BUDGET_CENTS) {
-    advice.push({
-      id:    'allowance-rachel',
-      type:  'info',
-      title: "Rachel's allowance over budget",
-      body:  `${fmtAUD(rachelSpend)} spent vs ${fmtAUD(PERSONAL_BUDGET_CENTS)} monthly budget (${fmtAUD(rachelSpend - PERSONAL_BUDGET_CENTS)} over).`,
-    })
-  }
-  if (evanSpend > PERSONAL_BUDGET_CENTS) {
-    advice.push({
-      id:    'allowance-evan',
-      type:  'info',
-      title: "Evan's allowance over budget",
-      body:  `${fmtAUD(evanSpend)} spent vs ${fmtAUD(PERSONAL_BUDGET_CENTS)} monthly budget (${fmtAUD(evanSpend - PERSONAL_BUDGET_CENTS)} over).`,
-    })
-  }
-  // Investment performance advice
-  for (const id of investIds) {
-    const d    = deltasByAccount.get(id)
-    const last = d?.latest
-    const prev = d?.previous
-    if (last && prev && prev.cents > 0) {
-      const chg = ((last.cents - prev.cents) / prev.cents) * 100
-      if (chg < -5) {
-        const acctName = (accounts ?? []).find(a => a.id === id)
-        advice.push({
-          id:    `invest-drop-${id}`,
-          type:  'warning',
-          title: `Investment down ${Math.abs(chg).toFixed(1)}%`,
-          body:  `${acctName ? 'An investment account' : 'An investment'} fell ${Math.abs(chg).toFixed(1)}% since the last snapshot. Review your allocation on the Net Worth page.`,
-        })
-      }
-    }
-  }
-
-  const summaryCards: { label: string; sub: string; value: string; detail: string | null; colour: string; href: Route }[] = [
-    {
-      label: 'This month',
-      sub: 'Spending',
-      value: thisSpend > 0 ? fmtAUD(thisSpend) : '—',
-      detail: spendChange !== null ? `${spendChange > 0 ? '+' : ''}${spendChange.toFixed(0)}% vs last month` : null,
-      colour: spendChange !== null && spendChange > 10 ? 'text-red-400' : 'text-gray-500',
-      href: '/spending',
-    },
-    {
-      label: 'Net Worth',
-      sub: 'Total',
-      value: nw > 0 ? fmtAUD(nw) : '—',
-      detail: '$250k goal',
-      colour: 'text-gray-500',
-      href: '/networth',
-    },
-    {
-      label: 'Wedding',
-      sub: 'Remaining',
-      value: fmtAUD(weddingRemaining),
-      detail: `${fmtAUD(weddingSpent)} spent`,
-      colour: 'text-gray-500',
-      href: '/wedding',
-    },
-    {
-      label: nextOutflow?.description ?? 'No payments',
-      sub: 'Next payment',
-      value: nextOutflow ? fmtAUD(nextOutflow.amount_cents) : '—',
-      detail: nextDays !== null ? (nextDays <= 0 ? 'overdue' : `in ${nextDays}d`) : null,
-      colour: nextDays !== null && nextDays <= 30 ? 'text-yellow-400' : 'text-gray-500',
-      href: '/goals',
-    },
-  ]
+  const overBudget = month.budgetCents > 0 && month.spentCents > month.budgetCents
+  const dueCount = (dueRecurring ?? []).length
 
   return (
     <div className="space-y-4">
+      <p className="text-sm text-gray-400 px-1">{monthLabel(thisMonth)} check-in</p>
+
       {/* Net worth hero */}
-      <Link href="/networth">
-        <div className="bg-gray-900 rounded-2xl p-5 border border-gray-800 active:opacity-80">
-          <p className="text-gray-400 text-sm">Total Net Worth</p>
-          <p className="text-4xl font-bold text-white mt-1">{nw > 0 ? fmtAUD(nw) : '—'}</p>
-          <NWSparkline points={sparklinePoints} />
-          <p className="text-gray-500 text-xs mt-1">tap to see breakdown →</p>
+      <Link href={'/networth' as Route} className="block bg-gray-900 rounded-2xl p-5 border border-gray-800 hover:border-gray-700 transition-colors">
+        <p className="text-xs text-gray-500 uppercase tracking-wider">Net worth</p>
+        <div className="flex items-baseline gap-3 mt-1 flex-wrap">
+          <p className="text-4xl font-bold text-white tabular-nums">{fmtAUD(nw)}</p>
+          {change?.changeCents != null && (
+            <span className={`flex items-center gap-1 text-sm ${change.changeCents >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {change.changeCents >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
+              {fmtAUD(change.changeCents, { signed: true })} ({monthLabel(change.mk, { month: 'short' })})
+            </span>
+          )}
+        </div>
+        <NWSparkline points={spark} />
+        <p className="text-[11px] text-gray-500">Last 12 months, balances carried forward</p>
+      </Link>
+
+      {/* Hero goal */}
+      {deposit ? <DepositGoalCard goal={deposit} /> : (
+        <Link href={'/more/assumptions' as Route} className="block bg-gray-900 rounded-2xl border border-gray-800 p-5 text-sm text-gray-400">
+          Add your house plan in Assumptions to see the deposit date. →
+        </Link>
+      )}
+
+      {/* This month */}
+      <Link href={'/more/budgets' as Route} className="block bg-gray-900 rounded-2xl border border-gray-800 p-5 hover:border-gray-700 transition-colors">
+        <p className="text-xs text-gray-500 uppercase tracking-wider">This month</p>
+        <div className="mt-2 space-y-1.5 text-sm">
+          <p className="text-gray-300">
+            Spent <span className="text-white font-semibold tabular-nums">{fmtAUD(month.spentCents)}</span>
+            {month.budgetCents > 0
+              ? <> of <span className="tabular-nums">{fmtAUD(month.budgetCents)}</span> budget{overBudget && <span className="text-red-400"> · {fmtAUD(month.spentCents - month.budgetCents)} over</span>}</>
+              : <span className="text-gray-500"> · no budgets set</span>}
+          </p>
+          {month.budgetCents > 0 && (
+            <div className="h-2 bg-gray-800 rounded-full overflow-hidden" aria-hidden="true">
+              <div className={`h-full rounded-full ${overBudget ? 'bg-red-500' : 'bg-green-500'}`} style={{ width: `${Math.min(100, (month.spentCents / month.budgetCents) * 100)}%` }} />
+            </div>
+          )}
+          {month.savedPct !== null ? (
+            <p className="text-gray-300">
+              Saved <span className={`font-semibold tabular-nums ${month.savedCents >= 0 ? 'text-white' : 'text-red-400'}`}>{fmtAUD(month.savedCents, { signed: month.savedCents < 0 })}</span>
+              <span className="text-gray-500"> ({Math.round(month.savedPct * 100)}% of {fmtAUD(month.incomeCents)} in)</span>
+            </p>
+          ) : <p className="text-xs text-gray-500">No pay recorded this month yet.</p>}
+          <p className="text-[11px] text-gray-500">Transfers between your accounts aren&apos;t counted.</p>
         </div>
       </Link>
 
-      {/* Advice cards (dismissible, client-side) */}
-      {advice.length > 0 && <AdviceCards cards={advice} />}
+      {/* Check-in slot: the insights engine arrives in Phase 4 */}
+      <section className="bg-gray-900/60 rounded-2xl border border-dashed border-gray-800 p-4 flex items-start gap-3">
+        <ClipboardCheck size={16} className="text-gray-600 mt-0.5 flex-shrink-0" />
+        <div className="text-xs text-gray-500">
+          <p className="text-gray-400">Check-in</p>
+          <p>Up to three ranked things worth a look will appear here once the insights engine lands.</p>
+          {dueCount > 0 && <p className="mt-1"><Link href={'/settings' as Route} className="text-indigo-400">{dueCount} recurring item{dueCount === 1 ? '' : 's'} due to post →</Link></p>}
+        </div>
+      </section>
 
-      {/* Review queue + data freshness (Phase 1) */}
+      {/* Review queue prompt + data freshness strip */}
       <DataHealth />
-
-      {/* Summary grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {summaryCards.map(({ label, sub, value, detail, colour, href }) => (
-          <Link key={label} href={href}>
-            <div className="bg-gray-900 rounded-2xl p-4 border border-gray-800 active:opacity-80 h-full" style={{ minHeight: '120px' }}>
-              <p className="text-gray-400 text-xs">{sub}</p>
-              <p className="text-white font-semibold mt-1 text-lg leading-tight">{value}</p>
-              {detail && <p className={`text-xs mt-1 ${colour}`}>{detail}</p>}
-              <p className="text-gray-400 text-xs mt-0.5 truncate">{label}</p>
-            </div>
-          </Link>
-        ))}
-      </div>
-
-      {/* 6-Month Spending Trend */}
-      <SpendingTrend data={spendingTrendData} />
-
-      {/* 12.6 Cash-flow forecast */}
-      {liquidBal > 0 && (
-        <div className="bg-gray-900 rounded-2xl border border-gray-800 px-4 py-4">
-          <p className="text-xs text-gray-500 uppercase tracking-wider mb-3">30-Day Liquid Forecast</p>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-400">Liquid balance now</p>
-              <p className="text-lg font-semibold text-white">{fmtAUD(liquidBal)}</p>
-            </div>
-            {outflow30Total > 0 && (
-              <>
-                <div className="text-gray-600 text-sm">−</div>
-                <div>
-                  <p className="text-sm text-gray-400">Due in 30d</p>
-                  <p className="text-lg font-semibold text-yellow-300">{fmtAUD(outflow30Total)}</p>
-                </div>
-                <div className="text-gray-600 text-sm">=</div>
-                <div className="text-right">
-                  <p className="text-sm text-gray-400">Projected</p>
-                  <p className={`text-lg font-semibold ${projectedLiquid < 0 ? 'text-red-400' : 'text-green-400'}`}>
-                    {fmtAUD(projectedLiquid)}
-                  </p>
-                </div>
-              </>
-            )}
-            {outflow30Total === 0 && (
-              <p className="text-xs text-gray-500">No payments due in 30 days</p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 13.1 Recurring due to confirm */}
-      {(dueRecurring ?? []).length > 0 && (
-        <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-2xl overflow-hidden">
-          <div className="px-4 pt-4 pb-2 flex items-center justify-between">
-            <p className="text-yellow-300 text-sm font-medium">Due to Post</p>
-            <Link href={'/settings' as import('next').Route} className="text-xs text-indigo-400 hover:text-indigo-300">Manage →</Link>
-          </div>
-          <div className="divide-y divide-yellow-800/30">
-            {(dueRecurring ?? []).map(r => (
-              <div key={r.id} className="flex items-center justify-between px-4 py-3">
-                <div>
-                  <p className="text-sm text-white">{r.description}</p>
-                  <p className="text-xs text-yellow-400/70 mt-0.5">Due {r.next_due}</p>
-                </div>
-                <p className="text-sm font-medium text-white tabular-nums">{fmtAUD(r.amount_cents, { signed: true })}</p>
-              </div>
-            ))}
-          </div>
-          <p className="text-xs text-gray-500 px-4 pb-3">Go to Settings → Recurring to post these</p>
-        </div>
-      )}
-
-      {/* Upcoming payments */}
-      <div className="bg-gray-900 rounded-2xl border border-gray-800 overflow-hidden">
-        <div className="px-4 pt-4 pb-2 flex items-center justify-between">
-          <p className="text-gray-400 text-sm font-medium">Upcoming Payments</p>
-          <Link href="/goals" className="text-xs text-indigo-400 hover:text-indigo-300">See all →</Link>
-        </div>
-        {(outflows ?? []).length === 0 ? (
-          <p className="text-gray-400 text-sm px-4 pb-4">No planned payments</p>
-        ) : (
-          <div className="divide-y divide-gray-800">
-            {(outflows ?? []).slice(0, 4).map(o => {
-              const days = daysUntilPerth(o.due_date)
-              return (
-                <div key={o.due_date + o.description} className="flex items-center justify-between px-4 py-3">
-                  <div>
-                    <p className="text-sm text-white">{o.description}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">{fmtDate(o.due_date, { day: 'numeric', month: 'short' })}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-medium text-white tabular-nums">{fmtAUD(o.amount_cents)}</p>
-                    <p className={`text-xs mt-0.5 ${days <= 0 ? 'text-red-400' : days <= 30 ? 'text-yellow-400' : 'text-gray-500'}`}>
-                      {days <= 0 ? 'overdue' : days === 0 ? 'today' : `${days}d`}
-                    </p>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
     </div>
   )
 }
