@@ -1,6 +1,6 @@
 type PayloadItem = {
   name: string
-  value: number
+  value: number | [number, number]
   fill?: string
   stroke?: string
   color?: string
@@ -26,7 +26,7 @@ export default function ChartTooltip({ active, payload, label, formatValue }: Pr
             style={{ backgroundColor: p.fill ?? p.stroke ?? p.color ?? '#6b7280' }}
           />
           <span className="text-gray-300">{p.name}:</span>
-          <span className="text-white font-medium">{fmt(p.value)}</span>
+          <span className="text-white font-medium">{Array.isArray(p.value) ? `${fmt(p.value[0])} – ${fmt(p.value[1])}` : fmt(p.value)}</span>
         </div>
       ))}
     </div>

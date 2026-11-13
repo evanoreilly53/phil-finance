@@ -11,6 +11,7 @@ import {
   houseParams, leaveParams, selectCashflows, type CashflowRow, type Skipped,
 } from './inputs'
 import { solveGoal, type GoalSolve } from './goals'
+import { runProjection } from './engine'
 import { monthDiff } from './schedule'
 import { scenarioChain, selectScenarioEvents, type ScenarioRow } from './scenarios'
 import type { Assumptions, HouseParams, NetIncome, ProjAccount, ProjEvent, ProjectionInput, ProjPerson, Salary, SpendingBaseline } from './types'
@@ -193,7 +194,12 @@ export function buildPlan(d: PlanData, opts: { months?: number; scenarioId?: str
   }
 }
 
-export type DepositGoal = GoalSolve & { eventName: string; currentCents: number }
+export type DepositGoal = GoalSolve & {
+  eventName: string
+  currentCents: number
+  /** Phase 5: the FHSS release counted in the deposit (after tax), when FHSS is on. */
+  fhss: { netCents: number; month: string } | null
+}
 
 /** The projection input the deposit goal runs on: no purchase, horizon well past the house month. */
 export function depositGoalInput(plan: Plan): ProjectionInput | null {
@@ -215,5 +221,7 @@ export function depositGoal(plan: Plan): DepositGoal | null {
   const solve = solveGoal(input, 'depositPotCents', plan.house.house.upfrontCents, byMonth)
   const opening = plan.input.accounts.filter(x => plan.input.depositAccountIds.includes(x.id) || x.id === plan.input.sweepAccountId)
     .reduce((s, x) => s + x.balanceCents, 0)
-  return { ...solve, eventName: plan.house.name, currentCents: opening }
+  const releases = input.fhss ? runProjection(input).fhss : []
+  const fhss = releases.length ? { netCents: releases.reduce((s, r) => s + r.netCents, 0), month: releases[0].month } : null
+  return { ...solve, eventName: plan.house.name, currentCents: opening, fhss }
 }

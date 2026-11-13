@@ -42,8 +42,11 @@ export default function DepositGoalCard({ goal, href = '/future' }: { goal: Depo
       ) : goal.extraMonthlyCents === 0 && goal.projectedMonth !== 'now' ? (
         <p className="text-xs text-gray-500 mt-1">No extra saving needed on the current plan.</p>
       ) : null}
+      {goal.fhss && (
+        <p className="text-xs text-gray-400 mt-1">Includes about {fmtAUD(goal.fhss.netCents)} FHSS release (after tax, estimate) in {mon(goal.fhss.month)}.</p>
+      )}
       <p className="text-[11px] text-gray-500 mt-2">
-        Deposit + duty + costs for &ldquo;{goal.eventName}&rdquo;. Counts the accounts ticked in Assumptions; super isn&apos;t included.
+        Deposit + duty + costs for &ldquo;{goal.eventName}&rdquo;. Counts the accounts ticked in Assumptions; super isn&apos;t included{goal.fhss ? ' except the FHSS release' : ''}.
       </p>
     </Link>
   )

@@ -5,7 +5,10 @@ import { AlertTriangle, SlidersHorizontal, Target } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
 import { fmtAUD, fmtCompact, fmtDate, monthLabel } from '@/lib/format'
 import { fetchPlanData, buildPlan, depositGoal, type Plan } from '@/lib/projection/load'
-import { summariseScenario, diffAssumptions, diffHouse, type ScenarioSummary } from '@/lib/projection/scenarios'
+import { summariseScenario, diffAssumptions, diffHouse, diffPersonAssumptions, type ScenarioSummary } from '@/lib/projection/scenarios'
+import { projectionBands } from '@/lib/projection/bands'
+import { superToRetirement, monthsToRetirement, PRESERVATION_AGE } from '@/lib/projection/retirement'
+import { birthMonthKey } from '@/lib/assumptions'
 import { ScenarioChips } from '@/components/planUi'
 import WhatIf from './WhatIf'
 import { runProjection } from '@/lib/projection/engine'
@@ -52,6 +55,7 @@ export default async function FuturePage({ searchParams }: { searchParams: Searc
     sum: summariseScenario(p.input, houseOf(p), atMonth),
     diffs: [
       ...diffAssumptions(baselinePlan.assumptions, p.assumptions).map(d => `${d.label} ${d.from} → ${d.to}`),
+      ...diffPersonAssumptions(baselinePlan.personAssumptions, p.personAssumptions, baselinePlan.people).map(d => `${d.label} ${d.from} → ${d.to}`),
       ...diffHouse(houseOf(baselinePlan), houseOf(p)).map(d => `${d.field} ${d.from} → ${d.to}`),
       ...p.leaves.filter(l => l.scenarioId).map(l => `${l.name}, ${mon(l.date.slice(0, 7))}–${mon(l.endDate.slice(0, 7))}`),
     ],
@@ -68,6 +72,9 @@ export default async function FuturePage({ searchParams }: { searchParams: Searc
     [`Cash ${mon(atMonth)}`, s => (s.liquidAtCents !== null ? sc(s.liquidAtCents) : '—')],
     ['Lowest cash', s => (s.lowestCash ? `${sc(s.lowestCash.cents)} (${mon(s.lowestCash.month)})` : '—')],
     [`Mortgage interest to ${mon(atMonth)}`, s => (s.interestToAtCents ? fmtCompact(s.interestToAtCents) : '—')],
+    ['Salary sacrifice', s => (s.sacrificeAnnualCents ? `${fmtCompact(s.sacrificeAnnualCents)}/yr` : '—')],
+    ['FHSS release (after tax, est.)', s => (s.fhssNetCents ? fmtCompact(s.fhssNetCents) : '—')],
+    [`Super ${mon(atMonth)}`, s => (s.superAtCents !== null ? fmtCompact(s.superAtCents) : '—')],
   ]
   const deposit = depositGoal(plan)
   const points = chartSeries(projection)
@@ -92,6 +99,21 @@ export default async function FuturePage({ searchParams }: { searchParams: Searc
   const stale = plan.input.accounts.filter(a => a.balanceAsOf && dayDiff(a.balanceAsOf, plan.input.today) > 35)
   const a = plan.assumptions
 
+  // Phase 5: uncertainty band (toggle) and super to 60.
+  const showBand = params.band === '1'
+  const rates = {
+    invest: { returnPct: a.investment_return_pct.value, volatilityPct: a.investment_volatility_pct.value },
+    super: { returnPct: a.super_return_pct.value, volatilityPct: a.super_volatility_pct.value },
+  }
+  const band = showBand ? projectionBands(projection, rates).map(b => ({ p10: Math.round(b.netWorth.p10 / 100), p50: Math.round(b.netWorth.p50 / 100), p90: Math.round(b.netWorth.p90 / 100) })) : null
+  const lastBand = band?.[band.length - 1]
+  const births = Object.fromEntries(plan.people.map(p => [p.key, birthMonthKey(plan.personAssumptions[p.key]?.birth_month.value ?? 0)]))
+  const anyBirth = Object.values(births).some(Boolean)
+  const retirement = anyBirth
+    ? superToRetirement(runProjection({ ...plan.input, months: monthsToRetirement(plan.input.startMonth, Object.values(births)) }), plan.people, births, { inflationPct: a.inflation_pct.value, super: rates.super })
+    : null
+  const bandHref = `/future?years=${years}${sq}${selected ? `&m=${selected}` : ''}${showBand ? '' : '&band=1'}`
+
   return (
     <div className="space-y-4">
       {/* Scenario + horizon */}
@@ -115,9 +137,27 @@ export default async function FuturePage({ searchParams }: { searchParams: Searc
           <p className="text-sm font-semibold text-white">Where you&apos;re heading</p>
           {last && <p className="text-xs text-gray-400 tabular-nums">{mon(last.month)}: {fmtCompact(last.netWorthCents)} net worth</p>}
         </div>
-        <FutureChart points={points} pins={pins} years={years} selected={selected} query={sq} />
+        <FutureChart points={points} pins={pins} years={years} selected={selected} query={`${sq}${showBand ? '&band=1' : ''}`} band={band} />
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2">
+          <Link href={bandHref as Route} scroll={false} aria-pressed={showBand}
+            className={`text-xs px-3 py-1.5 rounded-lg border ${showBand ? 'bg-pink-500/15 border-pink-500/40 text-pink-200' : 'bg-gray-800 border-gray-700 text-gray-300 hover:text-white'}`}>
+            {showBand ? 'Hide range' : 'Show range (p10–p90)'}
+          </Link>
+          {lastBand && last && (
+            <p className="text-[11px] text-gray-400">
+              {mon(last.month)}: net worth likely between <span className="text-gray-200 tabular-nums">{fmtCompact(lastBand.p10 * 100)}</span> and <span className="text-gray-200 tabular-nums">{fmtCompact(lastBand.p90 * 100)}</span> (8 in 10 outcomes; estimate).
+            </p>
+          )}
+        </div>
+        {showBand && (
+          <p className="text-[11px] text-gray-500 mt-1">
+            The solid line is the plan. The shaded range varies investments ({rates.invest.returnPct}% a year, volatility {rates.invest.volatilityPct}%) and super ({rates.super.returnPct}%, volatility {rates.super.volatilityPct}%) as markets might; cash, property and loans stay as planned.
+            It&apos;s an analytic approximation, slightly wider than a full simulation. Change the volatility in <Link href={'/more/assumptions' as Route} className="text-indigo-400">Assumptions</Link>. Not a forecast or advice.
+          </p>
+        )}
         <form action="/future" className="flex items-center gap-2 mt-3">
           <input type="hidden" name="years" value={years} />
+          {showBand && <input type="hidden" name="band" value="1" />}
           {sq && <input type="hidden" name="s" value={plan.scenario!.id} />}
           <label htmlFor="m" className="text-xs text-gray-400">Open month</label>
           <select id="m" name="m" defaultValue={selected ?? ''} className="bg-gray-800 border border-gray-700 rounded-lg text-xs text-gray-200 px-2 py-1.5">
@@ -206,6 +246,45 @@ export default async function FuturePage({ searchParams }: { searchParams: Searc
         <Link href={'/goals' as Route} className="block text-xs text-indigo-400 px-1">All goals and payments →</Link>
       </section>
 
+      {/* Super to retirement (Phase 5) */}
+      <section className="bg-gray-900 rounded-2xl border border-gray-800 p-5 space-y-3" id="retirement">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs text-gray-500 uppercase tracking-wider">Super at {PRESERVATION_AGE}</h2>
+          <Link href={'/more/assumptions' as Route} className="text-xs text-indigo-400">Birth months, sacrifice →</Link>
+        </div>
+        {!retirement ? (
+          <p className="text-sm text-gray-400">Add each person&apos;s birth month in <Link href={'/more/assumptions' as Route} className="text-indigo-400">Assumptions</Link> to see super at {PRESERVATION_AGE} (preservation age).</p>
+        ) : (
+          <ul className="space-y-3">
+            {retirement.map(r => (
+              <li key={r.personKey} className="text-sm">
+                <p className="text-white">{r.name}</p>
+                {r.status === 'ok' ? (
+                  <>
+                    <p className="text-xs text-gray-300 mt-0.5">
+                      At {PRESERVATION_AGE} ({mon(r.retireMonth!)}): about <span className="text-white font-semibold tabular-nums">{fmtCompact(r.todayCents!)}</span> in today&apos;s dollars
+                      {r.band && <> · likely {fmtCompact(r.band.p10)}–{fmtCompact(r.band.p90)}</>}
+                      <span className="text-gray-500"> ({fmtCompact(r.nominalCents!)} in {r.retireMonth!.slice(0, 4)} dollars)</span>
+                    </p>
+                    {r.rows.length > 1 && (
+                      <p className="text-[11px] text-gray-500 mt-0.5 tabular-nums">{r.rows.map(x => `${x.age}: ${fmtCompact(x.todayCents)}`).join(' · ')}</p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {r.status === 'no-birth-month' ? 'No birth month set.' : r.status === 'already-60' ? `Already ${PRESERVATION_AGE} or over.` : r.status === 'no-super' ? 'No super account set up (Track › Accounts).' : 'Further out than the 50-year projection.'}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="text-[11px] text-gray-500">
+          From the same projection: employer super (12% of salary, rising with pay), salary sacrifice, both less 15% contributions tax; fees; any FHSS release; {a.super_return_pct.value}% a year after fees and tax, volatility {a.super_volatility_pct.value}% for the range.
+          Today&apos;s dollars use {a.inflation_pct.value}% inflation. Assumes you keep working to {PRESERVATION_AGE}. Estimate, not advice.
+        </p>
+      </section>
+
       {/* Events */}
       <section className="bg-gray-900 rounded-2xl border border-gray-800 p-5 space-y-3">
         <div className="flex items-center justify-between">
@@ -240,6 +319,13 @@ export default async function FuturePage({ searchParams }: { searchParams: Searc
             {' '}(budget where you&apos;ve set one, otherwise the average of {mon(plan.input.spending.months[0])}–{mon(plan.input.spending.months[plan.input.spending.months.length - 1])}; transfers, wedding and one-offs left out), rising {a.inflation_pct.value}% a year.
           </li>
           <li><span className="text-gray-500">Growth:</span> savings {a.cash_return_pct.value}%, investments {a.investment_return_pct.value}%, super {a.super_return_pct.value}%, homes {a.house_price_growth_pct.value}%, mortgage {a.mortgage_rate_pct.value}%, pay {a.wage_growth_pct.value}% a year.</li>
+          {(plan.input.sacrifice?.length || plan.fhss.wanted) && (
+            <li>
+              <span className="text-gray-500">Salary sacrifice:</span>{' '}
+              {plan.input.sacrifice?.length ? plan.input.sacrifice.map(s => `${plan.people.find(p => p.key === s.personKey)?.name ?? s.personKey} ${fmtAUD(s.annualCents)}/yr`).join(', ') : 'none'}
+              {plan.fhss.on && plan.fhss.releaseMonth ? `; FHSS on, released (less tax) in ${mon(plan.fhss.releaseMonth)}${projection.fhss.length ? `: about ${fmtAUD(projection.fhss.reduce((s, r) => s + r.netCents, 0))}` : ''}` : plan.fhss.wanted ? `; FHSS on but not modelled: ${plan.fhss.note}` : ''}.
+            </li>
+          )}
           <li><span className="text-gray-500">Savings collect in:</span> {projection.accounts.find(x => x.id === projection.sweepAccountId)?.name}</li>
           {plan.fx.map(f => (
             <li key={f.currency}><span className="text-gray-500">{f.currency}:</span> {f.rate} AUD{f.date ? ` (ECB, ${fmtDate(f.date, { day: 'numeric', month: 'short' })})` : ' (assumption)'}</li>
