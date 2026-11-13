@@ -1,7 +1,9 @@
 // Home "monthly check-in" numbers. Pure.
 
 import { budgetsForMonth, spendByCategory, type BudgetRow, type CategoryNode, type SpendTx } from './budgets'
-import type { MonthlyNetWorth } from './balances'
+import { latestBalanceByAccount, type BalanceSnapshot, type MonthlyNetWorth } from './balances'
+import { addMonths } from './format'
+import { monthEnd } from './projection/schedule'
 
 export type MonthSummary = {
   spentCents: number
@@ -37,6 +39,59 @@ export function monthSummary(
   }
   const saved = income - spent
   return { spentCents: spent, budgetCents: budget, incomeCents: income, savedCents: saved, savedPct: income > 0 ? saved / income : null }
+}
+
+export type NetWorthExplained = {
+  month: string
+  startCents: number
+  endCents: number
+  changeCents: number
+  /** Ledger rows that add up exactly to changeCents. */
+  rows: { key: string; label: string; cents: number; detail?: string }[]
+  /** Per-account change (carry-forward balances), biggest first. */
+  accounts: { id: string; name: string; startCents: number; endCents: number; changeCents: number; updated: boolean }[]
+}
+
+/**
+ * Why net worth moved in `month`: month-end balances (each account's last
+ * known balance carried forward) vs the month before, split into recorded
+ * money in, recorded spending, and everything else (investment and super
+ * growth, interest, accounts not updated, cash outside tracked accounts).
+ * The rows add up exactly to the change.
+ */
+export function explainNetWorth(p: {
+  month: string
+  snapshots: readonly BalanceSnapshot[]
+  accounts: readonly { id: string; name: string }[]
+  txs: readonly SpendTx[]
+  categories: readonly CategoryNode[]
+}): NetWorthExplained {
+  const ids = new Set(p.accounts.map(a => a.id))
+  const prevEnd = monthEnd(addMonths(p.month, -1))
+  const end = monthEnd(p.month)
+  const before = latestBalanceByAccount(p.snapshots, { accountIds: ids, asOf: prevEnd })
+  const after = latestBalanceByAccount(p.snapshots, { accountIds: ids, asOf: end })
+  const accounts = p.accounts.map(a => {
+    const s = before.get(a.id)?.cents ?? 0
+    const e = after.get(a.id)?.cents ?? 0
+    const d = after.get(a.id)?.date
+    return { id: a.id, name: a.name, startCents: s, endCents: e, changeCents: e - s, updated: !!d && d > prevEnd }
+  }).filter(a => a.startCents !== 0 || a.endCents !== 0)
+    .sort((x, y) => Math.abs(y.changeCents) - Math.abs(x.changeCents))
+  const startCents = accounts.reduce((s, a) => s + a.startCents, 0)
+  const endCents = accounts.reduce((s, a) => s + a.endCents, 0)
+  const m = monthSummary(p.txs, p.categories, [], p.month)
+  const other = endCents - startCents - m.incomeCents + m.spentCents
+  const stale = accounts.filter(a => !a.updated).length
+  return {
+    month: p.month, startCents, endCents, changeCents: endCents - startCents, accounts,
+    rows: [
+      { key: 'income', label: 'Money in (pay and other income)', cents: m.incomeCents },
+      { key: 'spending', label: 'Spending (transfers excluded)', cents: -m.spentCents },
+      { key: 'other', label: 'Growth, interest and untracked', cents: other,
+        detail: `Investment and super movements, interest, cash spent from accounts without transactions${stale ? `; ${stale} account${stale === 1 ? '' : 's'} not updated this month (carried forward)` : ''}.` },
+    ],
+  }
 }
 
 /** Latest month-end net worth and the change on the month before. */
