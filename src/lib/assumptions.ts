@@ -57,3 +57,22 @@ export function resolveAssumptions(
   }
   return out
 }
+
+/**
+ * Validate edited assumption values (from the Assumptions form). Unknown keys
+ * and blanks are dropped; out-of-range or non-numeric values are errors.
+ */
+export function validateAssumptionValues(input: Record<string, unknown>):
+  { values: Partial<Record<AssumptionKey, number>>; errors: Partial<Record<AssumptionKey, string>> } {
+  const values: Partial<Record<AssumptionKey, number>> = {}
+  const errors: Partial<Record<AssumptionKey, string>> = {}
+  for (const [k, raw] of Object.entries(input)) {
+    if (!isAssumptionKey(k) || raw === '' || raw === null || raw === undefined) continue
+    const v = typeof raw === 'number' ? raw : Number(String(raw).trim())
+    const def: AssumptionDef = ASSUMPTIONS[k]
+    if (!Number.isFinite(v)) errors[k] = 'Enter a number'
+    else if (v < def.min || v > def.max) errors[k] = `Between ${def.min} and ${def.max}`
+    else values[k] = Math.round(v * 1000) / 1000
+  }
+  return { values, errors }
+}

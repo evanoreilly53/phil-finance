@@ -51,4 +51,5 @@ export const PAGE_TITLES: Record<string, string> = {
   '/house':                'House',
   '/more':                 'More',
   '/more/budgets':         'Budgets',
+  '/more/assumptions':     'Assumptions',
 }
