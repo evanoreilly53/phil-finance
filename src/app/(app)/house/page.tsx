@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import type { ReactNode } from 'react'
 import type { Route } from 'next'
 import { House, Scale, BookOpen } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
@@ -14,6 +15,9 @@ import { Caveat, Panel, ScenarioChips, Stat } from '@/components/planUi'
 import PriceExplorer from './PriceExplorer'
 import FhssCard from './FhssCard'
 import MortgageCard from './MortgageCard'
+import BoughtToggle from './BoughtToggle'
+import HomeLoanCard from '@/components/HomeLoanCard'
+import { homeLoanStatus, isLoanMode } from '@/lib/house/homeLoan'
 
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>
 const mon = (mk: string) => monthLabel(mk, { month: 'short', year: 'numeric' })
@@ -82,10 +86,30 @@ export default async function HousePage({ searchParams }: { searchParams: Search
   // ── FHSS ───────────────────────────────────────────────────────────────────
   const tl = fhssTimeline(houseMonth, today)
 
+  // ── Home Loan mode (Phase 5) ───────────────────────────────────────────────
+  const loanMode = isLoanMode(h, data.thisMonth)
+  const loan = loanMode ? homeLoanStatus({ thisMonth: data.thisMonth, accounts: plan.input.accounts, house: { date: h.date, status: h.status, params: hp }, mortgageRatePct: rate }) : null
+  const canMark = h.scenarioId === null
+
   return (
     <div className="space-y-4">
       {chips}
 
+      {loan && (
+        <>
+          <HomeLoanCard s={loan} full />
+          {canMark && (
+            <div className="px-1 space-y-1">
+              <BoughtToggle eventId={h.id} bought={h.status === 'done'} />
+              <p className="text-[11px] text-gray-500">
+                {h.status === 'done' ? 'Marked as bought.' : `Showing the loan because ${mon(houseMonth)} has come.`} If you haven&apos;t bought yet, {h.status === 'done' ? 'undo it here' : 'move the month in Assumptions'} and the deposit tools come back.
+              </p>
+            </div>
+          )}
+        </>
+      )}
+
+      <PurchaseTools collapsed={loanMode}>
       <Panel title="The plan" icon={<House size={14} />} aside={<Link href={'/more/assumptions' as Route} className="text-xs text-indigo-400">Edit →</Link>}>
         <p className="text-white font-semibold">{h.name}{!plan.scenario?.isBaseline && plan.scenario && <span className="text-xs text-indigo-300 font-normal"> · {plan.scenario.name}{h.scenarioId === null ? ' (baseline house)' : ''}</span>}</p>
         <dl className="grid grid-cols-3 gap-3">
@@ -97,8 +121,10 @@ export default async function HousePage({ searchParams }: { searchParams: Search
           <p className="text-xs text-gray-400">
             Deposit: {goal.projectedMonth === 'now' ? 'already there' : goal.projectedMonth ? <>projected <span className="text-white">{mon(goal.projectedMonth)}</span></> : 'not reached in the projection'}
             {goal.extraMonthlyCents ? ` · +${fmtAUD(goal.extraMonthlyCents)}/mo closes the gap` : ''}
+            {goal.fhss ? ` · includes ~${fmtAUD(goal.fhss.netCents)} FHSS release in ${mon(goal.fhss.month)}` : ''}
           </p>
         )}
+        {!loanMode && canMark && <BoughtToggle eventId={h.id} bought={false} />}
       </Panel>
 
       <PriceExplorer
@@ -143,6 +169,9 @@ export default async function HousePage({ searchParams }: { searchParams: Search
       />
       <p className="text-[11px] text-gray-500 px-1 -mt-2">
         FHSS contributions share the concessional cap with employer super. See what&apos;s left this year in <Link href={'/income#super' as Route} className="text-indigo-400">Track › Income › Super cap</Link>.
+        {' '}{plan.fhss.on && plan.input.sacrifice?.length
+          ? <>FHSS is <span className="text-gray-300">on</span> in this plan&apos;s projection: {plan.input.sacrifice.map(s => `${plan.people.find(p => p.key === s.personKey)?.name ?? s.personKey} ${fmtAUD(s.annualCents)}/yr`).join(', ')} salary sacrifice, released before {mon(houseMonth)}{goal?.fhss ? ` (about ${fmtAUD(goal.fhss.netCents)} after tax)` : ''}.</>
+          : <>FHSS is <span className="text-gray-300">off</span> in the projection{plan.fhss.note ? ` (${plan.fhss.note})` : ''}. Switch it on with a salary sacrifice in <Link href={'/more/assumptions' as Route} className="text-indigo-400">Assumptions</Link>.</>}
       </p>
 
       <MortgageCard
@@ -151,6 +180,7 @@ export default async function HousePage({ searchParams }: { searchParams: Search
         cashAccounts={cashAccounts} offsetAccountId={hp.offsetAccountId} extraRepaymentMonthlyCents={hp.extraRepaymentMonthlyCents}
         surplusAfterCents={surplusAfter}
       />
+      </PurchaseTools>
 
       <details className="bg-gray-900 rounded-2xl border border-gray-800 p-5 text-xs">
         <summary className="flex items-center gap-2 text-gray-400 cursor-pointer"><BookOpen size={13} /> Where these numbers come from</summary>
@@ -166,5 +196,16 @@ export default async function HousePage({ searchParams }: { searchParams: Search
       </details>
       <Caveat>Planning software, not financial advice. It models your own numbers against published rules and doesn&apos;t recommend lenders or products.</Caveat>
     </div>
+  )
+}
+
+/** Before the purchase: the tools as they are. In Home Loan mode: tucked away, still reachable. */
+function PurchaseTools({ collapsed, children }: { collapsed: boolean; children: ReactNode }) {
+  if (!collapsed) return <>{children}</>
+  return (
+    <details className="bg-gray-900/60 rounded-2xl border border-gray-800 p-4">
+      <summary className="text-xs text-gray-400 cursor-pointer">Before you bought: the plan, price explorer, borrowing power, FHSS and mortgage planner</summary>
+      <div className="space-y-4 mt-4">{children}</div>
+    </details>
   )
 }

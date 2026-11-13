@@ -11,6 +11,7 @@ import { addDays } from '@/lib/import/dates'
 import { fetchPlanData, buildPlan, depositGoal, depositGoalInput, type DepositGoal, type Plan } from '@/lib/projection/load'
 import { loadAccountFreshness, type AccountFreshness } from '@/lib/freshnessData'
 import { fhssProjectionMonths, fhssTimeline } from '@/lib/house/fhss'
+import { isLoanMode } from '@/lib/house/homeLoan'
 import { detectSubscriptions, type Subscription } from '@/lib/subscriptions/detect'
 import type { SubscriptionMark } from '@/lib/subscriptions/bills'
 import { CONCESSIONAL_SOURCE, contributionsInFy, type ConcessionalRow } from '@/lib/superCap'
@@ -77,7 +78,9 @@ export async function loadCheckin(supabase: Supabase, opts: { recordLog?: boolea
   const plan = buildPlan(data, { months: 60 })
   const { today, thisMonth } = data
   let deposit: DepositGoal | null = null
-  try { deposit = depositGoal(plan) } catch { deposit = null }
+  // Phase 5: in Home Loan mode the deposit goal is done with, so deposit-based rules stay quiet.
+  const loanMode = isLoanMode(plan.house, thisMonth)
+  try { deposit = loanMode ? null : depositGoal(plan) } catch { deposit = null }
 
   const since = `${addMonths(thisMonth, -25)}-01`
   const [txs, { data: categories }, { data: budgets }, freshness, states, prevLog, plannedRows] = await Promise.all([
@@ -118,7 +121,7 @@ export async function loadCheckin(supabase: Supabase, opts: { recordLog?: boolea
 
   const eurRate = plan.fx.find(f => f.currency === 'EUR')?.rate ?? plan.input.assumptions.fx_eur_aud
   const subscriptions: Subscription[] = detectSubscriptions(transactions.filter(t => t.date >= addDays(today, -400)), today)
-  const h = plan.house
+  const h = loanMode ? null : plan.house
   const ctx: InsightContext = {
     today, thisMonth, transactions,
     categories: (categories ?? []) as InsightCategory[],

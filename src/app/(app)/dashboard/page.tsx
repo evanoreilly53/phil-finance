@@ -10,6 +10,8 @@ import type { DepositGoal } from '@/lib/projection/load'
 import { loadCheckin, type CheckinData } from '@/lib/insights/load'
 import { perthToday } from '@/lib/import/dates'
 import DepositGoalCard from '@/components/DepositGoalCard'
+import HomeLoanCard from '@/components/HomeLoanCard'
+import { homeLoanStatus, isLoanMode } from '@/lib/house/homeLoan'
 import InsightCard from '@/components/InsightCard'
 import NWSparkline from './NWSparkline'
 import DataHealth from './DataHealth'
@@ -45,6 +47,11 @@ export default async function DashboardPage() {
 
   const month = monthSummary(monthTxs, categories ?? [], budgets ?? [], thisMonth)
   const deposit: DepositGoal | null = checkin?.deposit ?? null
+  // Phase 5: after the purchase month (or once marked bought), the hero goal becomes the home loan.
+  const ph = checkin?.plan.house ?? null
+  const loan = checkin && ph && isLoanMode(ph, thisMonth)
+    ? homeLoanStatus({ thisMonth, accounts: checkin.plan.input.accounts, house: { date: ph.date, status: ph.status, params: ph.house }, mortgageRatePct: checkin.plan.input.assumptions.mortgage_rate_pct })
+    : null
 
   const overBudget = month.budgetCents > 0 && month.spentCents > month.budgetCents
   const dueCount = (dueRecurring ?? []).length
@@ -70,7 +77,7 @@ export default async function DashboardPage() {
       </Link>
 
       {/* Hero goal */}
-      {deposit ? <DepositGoalCard goal={deposit} /> : (
+      {loan ? <HomeLoanCard s={loan} /> : deposit ? <DepositGoalCard goal={deposit} /> : (
         <Link href={'/more/assumptions' as Route} className="block bg-gray-900 rounded-2xl border border-gray-800 p-5 text-sm text-gray-400">
           Add your house plan in Assumptions to see the deposit date. →
         </Link>
