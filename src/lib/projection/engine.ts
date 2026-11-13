@@ -187,10 +187,20 @@ export function runProjection(input: ProjectionInput): Projection {
     }
 
     // 2. Pay ───────────────────────────────────────────────────────────────────
+    // Leave: a person on leave this month is paid `payPct` of their salary
+    // (tax worked out as if that were their pay for the whole year: an approximation).
+    const payShare = new Map<string, { pct: number; name: string }>()
+    for (const e of input.events) {
+      if (!e.leave || e.status !== 'planned' || excludedEventIds.has(e.id)) continue
+      if (e.date > to || e.leave.endDate < from) continue
+      const cur = payShare.get(e.leave.personKey)
+      if (!cur || e.leave.payPct < cur.pct) payShare.set(e.leave.personKey, { pct: e.leave.payPct, name: e.name })
+    }
     const grossByPerson = new Map<string, { gross: number; ids: string[] }>()
     for (const s of input.salaries) {
       if (s.startDate > to || (s.endDate && s.endDate < from)) continue
-      const gross = Math.round(s.grossAnnualCents * indexFactor(s.indexation, s.indexationPct, fyIdx, a))
+      const share = payShare.get(s.personKey)?.pct ?? 100
+      const gross = Math.round(s.grossAnnualCents * indexFactor(s.indexation, s.indexationPct, fyIdx, a) * share / 100)
       const cur = grossByPerson.get(s.personKey) ?? { gross: 0, ids: [] }
       grossByPerson.set(s.personKey, { gross: cur.gross + gross, ids: [...cur.ids, s.id] })
     }
@@ -216,7 +226,8 @@ export function runProjection(input: ProjectionInput): Projection {
       const mHelp = Math.round(tb.helpCents / 12)
       const net = mGross - mTax - mHelp
       const ref = { table: 'salary' as const, id: ids[0] }
-      trace.push({ kind: 'income', label: `${name}: gross pay`, cents: mGross, nwCents: 0, memo: true, ref, detail: `${fmt(gross)}/yr in ${fy}` })
+      const leave = payShare.get(personKey)
+      trace.push({ kind: 'income', label: `${name}: gross pay`, cents: mGross, nwCents: 0, memo: true, ref, detail: `${fmt(gross)}/yr in ${fy}${leave ? ` (${leave.name}: ${leave.pct}% of pay)` : ''}` })
       trace.push({
         kind: 'tax', label: `${name}: tax${mHelp ? ' + HELP' : ''}`, cents: -(mTax + mHelp), nwCents: 0, memo: true, ref,
         detail: `Income tax ${fmt(tb.incomeTaxCents - tb.litoCents)}, Medicare ${fmt(tb.medicareLevyCents)}` +
@@ -229,7 +240,8 @@ export function runProjection(input: ProjectionInput): Projection {
     }
     for (const ni of input.netIncomes) {
       if (ni.personKey && peopleWithSalary.has(ni.personKey)) continue
-      const c = Math.round(ni.monthlyNetCents * indexFactor('wages', null, fyIdx, a))
+      const share = ni.personKey ? (payShare.get(ni.personKey)?.pct ?? 100) : 100
+      const c = Math.round(ni.monthlyNetCents * indexFactor('wages', null, fyIdx, a) * share / 100)
       if (!c) continue
       move(sweep, c, { kind: 'income', label: `${ni.label}: take-home pay`, nwCents: c, ref: { table: 'net_income', id: ni.personKey ?? 'household' }, detail: ni.source })
       cf.takeHomeCents += c
@@ -331,13 +343,28 @@ export function runProjection(input: ProjectionInput): Projection {
       const homeId = `house:${e.id}`
       const loanId = `mortgage:${e.id}`
       addAccount(synthetic(homeId, 'Home', 'property'))
-      move(homeId, h.priceCents, { kind: 'event', label: 'Home bought', nwCents: h.priceCents, ref, detail: `Price ${fmt(h.priceCents)}; duty + costs ${fmt(costs)}${h.costsIsPlaceholder ? ' (placeholder estimate)' : ''}` })
+      move(homeId, h.priceCents, {
+        kind: 'event', label: 'Home bought', nwCents: h.priceCents, ref,
+        detail: `Price ${fmt(h.priceCents)}; ${costs < 0 ? `grant exceeds duty + fees by ${fmt(costs)}` : `duty, fees, LMI less grants ${fmt(costs)}`}${h.costsSource === 'entered' ? ' (your figure)' : ' (WA calculator)'}`,
+      })
       if (loan > 0) {
+        // Repayment fixed at drawdown (as banks set it); an offset or extra repayments shorten the loan.
+        const scheduled = annuityPayment(loan, a.mortgage_rate_pct, h.loanTermMonths)
+        const offsetId = h.offsetAccountId && byId.has(h.offsetAccountId) && CASH_TYPES.has(byId.get(h.offsetAccountId)!.type) ? h.offsetAccountId : null
+        if (h.offsetAccountId && !offsetId) warnOnce('The offset account chosen for the mortgage no longer exists, so no offset is modelled.')
         addAccount({
           ...synthetic(loanId, 'Mortgage', 'mortgage'),
-          loan: { repaymentCents: null, repaymentFreq: null, startDate: monthStart(addMonthsKey(mk, 1)), termMonths: h.loanTermMonths, interestOnly: false, offsetAccountId: null },
+          loan: {
+            repaymentCents: scheduled + h.extraRepaymentMonthlyCents, repaymentFreq: 'monthly',
+            startDate: monthStart(addMonthsKey(mk, 1)), termMonths: h.loanTermMonths, interestOnly: false, offsetAccountId: offsetId,
+          },
         })
-        move(loanId, -loan, { kind: 'event', label: 'Mortgage drawn', nwCents: -loan, ref, detail: `${a.mortgage_rate_pct}% over ${Math.round(h.loanTermMonths / 12)} years` })
+        if (offsetId) offsetToLoan.set(offsetId, loanId)
+        move(loanId, -loan, {
+          kind: 'event', label: 'Mortgage drawn', nwCents: -loan, ref,
+          detail: `${a.mortgage_rate_pct}% over ${Math.round(h.loanTermMonths / 12)} years, ${fmt(scheduled)}/mo` +
+            (h.extraRepaymentMonthlyCents ? ` + ${fmt(h.extraRepaymentMonthlyCents)} extra` : '') + (offsetId ? `; offset: ${nameOf(offsetId)}` : ''),
+        })
       }
       rentStopBaseCents += h.rentMonthlyCents
       cf.eventCostsCents += costs

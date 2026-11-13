@@ -4,7 +4,9 @@
 import { budgetsForMonth, rootCategoryId, spendByCategory, UNCATEGORISED, type BudgetRow, type CategoryNode, type SpendTx } from '../budgets'
 import { CASH_TYPES, INVEST_TYPES } from './engine'
 import { OCCURRENCES_PER_YEAR } from './schedule'
-import type { Frequency, HouseParams, Indexation, ProjAccount, ProjCashflow, Salary, SpendingBaseline, SpendingLine } from './types'
+import { isPropertyKind, type PropertyKind } from '../house/duty'
+import { purchase } from '../house/purchase'
+import type { Frequency, HouseParams, Indexation, LeaveParams, ProjAccount, ProjCashflow, Salary, SpendingBaseline, SpendingLine } from './types'
 
 // ── Spending baseline ─────────────────────────────────────────────────────────
 
@@ -77,14 +79,14 @@ export type CashflowRow = {
 
 export type Skipped = { id: string; description: string; reason: string }
 
-export function selectCashflows(rows: readonly CashflowRow[], opts: { today: string; scenarioId: string | null; cancelledEventIds?: ReadonlySet<string> }):
+export function selectCashflows(rows: readonly CashflowRow[], opts: { today: string; scenarioId: string | null; /** The scenario and its ancestors (a fork sees its parents' items). */ scenarioIds?: ReadonlySet<string>; cancelledEventIds?: ReadonlySet<string> }):
   { salaries: Salary[]; cashflows: ProjCashflow[]; skipped: Skipped[] } {
   const salaries: Salary[] = []
   const cashflows: ProjCashflow[] = []
   const skipped: Skipped[] = []
   for (const r of rows) {
     if (r.status !== 'planned') continue
-    if (r.scenario_id && r.scenario_id !== opts.scenarioId) continue
+    if (r.scenario_id && !(opts.scenarioIds ? opts.scenarioIds.has(r.scenario_id) : r.scenario_id === opts.scenarioId)) continue
     if (r.event_id && opts.cancelledEventIds?.has(r.event_id)) continue
     if (r.end_date && r.end_date < opts.today) continue
 
@@ -118,8 +120,6 @@ export function selectCashflows(rows: readonly CashflowRow[], opts: { today: str
 
 // ── House purchase params (life_events.params jsonb) ──────────────────────────
 
-/** Placeholder for WA transfer duty + fees until Phase 3's calculator. ~$42.6k general-rate duty on $1M + ~$2.4k fees. */
-export const DEFAULT_COSTS_RATE = 0.045
 export const DEFAULT_LOAN_TERM_MONTHS = 360
 
 function num(v: unknown): number | null {
@@ -127,20 +127,54 @@ function num(v: unknown): number | null {
   return typeof n === 'number' && Number.isFinite(n) ? n : null
 }
 
-export function houseParams(params: unknown, budgetCents: number | null): HouseParams | null {
-  const o = params && typeof params === 'object' && !Array.isArray(params) ? params as Record<string, unknown> : {}
+const obj = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {})
+
+/** The purchase-calculator settings stored in a house event's params. */
+export function houseSettings(params: unknown) {
+  const o = obj(params)
+  return {
+    firstHome: o.first_home_buyer !== false,
+    propertyKind: isPropertyKind(o.property_kind) ? o.property_kind : o.new_build === true ? 'new' as const : 'established' as const,
+    useScheme: o.use_deposit_scheme === true,
+    offsetAccountId: typeof o.offset_account_id === 'string' && o.offset_account_id ? o.offset_account_id : null,
+    extraRepaymentMonthlyCents: Math.max(0, Math.round(num(o.extra_repayment_monthly_cents) ?? 0)),
+  }
+}
+
+/**
+ * House event params → engine params. Duty, fees, LMI and FHOG come from the
+ * WA purchase calculator (contract date = the event date) unless you've typed
+ * your own figure in `upfront_costs_cents`.
+ */
+export function houseParams(params: unknown, budgetCents: number | null, eventDate?: string): HouseParams | null {
+  const o = obj(params)
   const price = num(o.price_cents)
   if (!price || price <= 0) return null
-  const upfront = num(o.deposit_cents) ?? budgetCents ?? Math.round(price * 0.25)
-  const costs = num(o.upfront_costs_cents)
+  const upfront = Math.max(0, Math.round(num(o.deposit_cents) ?? budgetCents ?? Math.round(price * 0.25)))
+  const entered = num(o.upfront_costs_cents)
+  const s = houseSettings(o)
+  const costs = entered !== null ? Math.max(0, Math.round(entered)) : purchase({
+    priceCents: Math.round(price), cashCents: upfront, firstHome: s.firstHome, kind: s.propertyKind,
+    contractDate: eventDate ?? '9999-12-31', useScheme: s.useScheme,
+  }).costsCents
   return {
     priceCents: Math.round(price),
-    upfrontCents: Math.max(0, Math.round(upfront)),
-    costsCents: Math.max(0, Math.round(costs ?? price * DEFAULT_COSTS_RATE)),
-    costsIsPlaceholder: costs === null,
+    upfrontCents: upfront,
+    costsCents: costs,
+    costsSource: entered !== null ? 'entered' : 'calculated',
     loanTermMonths: Math.max(12, Math.min(600, Math.round(num(o.loan_term_months) ?? DEFAULT_LOAN_TERM_MONTHS))),
     rentMonthlyCents: Math.max(0, Math.round(num(o.rent_monthly_cents) ?? 0)),
+    ...s,
   }
+}
+
+/** Leave event params → engine params (null if incomplete). */
+export function leaveParams(params: unknown, endDate: string | null): LeaveParams | null {
+  const o = obj(params)
+  const personKey = typeof o.person_key === 'string' ? o.person_key : null
+  const payPct = num(o.pay_pct) ?? 0
+  if (!personKey || !endDate) return null
+  return { personKey, payPct: Math.max(0, Math.min(100, payPct)), endDate }
 }
 
 export function depositAccountIdsFromParams(params: unknown): string[] | null {
@@ -172,11 +206,17 @@ export type HouseEdit = {
   rentMonthlyCents: number
   loanTermMonths: number
   depositAccountIds: string[]
+  /** Optional purchase settings (undefined = keep what's stored). */
+  firstHome?: boolean
+  propertyKind?: PropertyKind
+  useScheme?: boolean
+  offsetAccountId?: string | null
+  extraRepaymentMonthlyCents?: number
 }
 
-/** Merge edits into the stored params, keeping keys the form doesn't own (state, first_home_buyer...). */
+/** Merge edits into the stored params, keeping keys the form doesn't own (state, notes...). */
 export function mergeHouseParams(existing: unknown, edit: HouseEdit): Record<string, unknown> {
-  const base = existing && typeof existing === 'object' && !Array.isArray(existing) ? { ...(existing as Record<string, unknown>) } : {}
+  const base = { ...obj(existing) }
   base.price_cents = edit.priceCents
   base.deposit_cents = edit.upfrontCents
   if (edit.costsCents === null) delete base.upfront_costs_cents
@@ -184,6 +224,19 @@ export function mergeHouseParams(existing: unknown, edit: HouseEdit): Record<str
   base.rent_monthly_cents = edit.rentMonthlyCents
   base.loan_term_months = edit.loanTermMonths
   base.deposit_account_ids = edit.depositAccountIds
+  return mergeHouseSettings(base, edit)
+}
+
+export type HouseSettingsEdit = Pick<HouseEdit, 'firstHome' | 'propertyKind' | 'useScheme' | 'offsetAccountId' | 'extraRepaymentMonthlyCents'>
+
+/** Merge only the purchase settings (House tab edits). */
+export function mergeHouseSettings(existing: unknown, edit: HouseSettingsEdit): Record<string, unknown> {
+  const base = { ...obj(existing) }
+  if (edit.firstHome !== undefined) base.first_home_buyer = edit.firstHome
+  if (edit.propertyKind !== undefined) { base.property_kind = edit.propertyKind; base.new_build = edit.propertyKind !== 'established' }
+  if (edit.useScheme !== undefined) base.use_deposit_scheme = edit.useScheme
+  if (edit.offsetAccountId !== undefined) { if (edit.offsetAccountId) base.offset_account_id = edit.offsetAccountId; else delete base.offset_account_id }
+  if (edit.extraRepaymentMonthlyCents !== undefined) base.extra_repayment_monthly_cents = Math.max(0, Math.round(edit.extraRepaymentMonthlyCents))
   return base
 }
 
@@ -195,5 +248,7 @@ export function validateHouseEdit(e: HouseEdit): string | null {
   if (e.costsCents !== null && (!ok(e.costsCents) || e.costsCents > e.upfrontCents)) return 'Duty + costs must be part of the upfront amount'
   if (!ok(e.rentMonthlyCents)) return 'Rent must be zero or more'
   if (!Number.isInteger(e.loanTermMonths) || e.loanTermMonths < 12 || e.loanTermMonths > 600) return 'Loan term must be 1–50 years'
+  if (e.propertyKind !== undefined && !isPropertyKind(e.propertyKind)) return 'Pick a property type'
+  if (e.extraRepaymentMonthlyCents !== undefined && (!ok(e.extraRepaymentMonthlyCents) || e.extraRepaymentMonthlyCents > 10_000_000)) return 'Extra repayment must be $0–$100,000 a month'
   return null
 }

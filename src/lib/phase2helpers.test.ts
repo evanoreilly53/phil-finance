@@ -20,7 +20,7 @@ describe('house edits', () => {
     const merged = mergeHouseParams({ state: 'WA', first_home_buyer: true, upfront_costs_cents: 123 }, edit)
     expect(merged).toMatchObject({ state: 'WA', first_home_buyer: true, price_cents: $(950_000), deposit_cents: $(240_000), loan_term_months: 300, deposit_account_ids: ['a'] })
     expect('upfront_costs_cents' in merged).toBe(false)
-    expect(houseParams(merged, null)).toMatchObject({ priceCents: $(950_000), upfrontCents: $(240_000), costsIsPlaceholder: true, rentMonthlyCents: $(2_600), loanTermMonths: 300 })
+    expect(houseParams(merged, null)).toMatchObject({ priceCents: $(950_000), upfrontCents: $(240_000), costsSource: 'calculated', rentMonthlyCents: $(2_600), loanTermMonths: 300, firstHome: true })
   })
   it('validation', () => {
     expect(validateHouseEdit(edit)).toBeNull()

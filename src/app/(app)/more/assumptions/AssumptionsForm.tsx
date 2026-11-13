@@ -5,11 +5,13 @@ import { fmtAUD, monthLabel } from '@/lib/format'
 import { annualTakeHome, perPeriod } from '@/lib/tax/takeHome'
 import type { FyKey } from '@/lib/tax/config'
 import { saveAssumptions, saveHouse, savePersonFlags, saveSalary } from './actions'
+import { purchase } from '@/lib/house/purchase'
+import type { PropertyKind } from '@/lib/house/duty'
 
-export type AssumptionField = { key: string; label: string; unit: 'pct' | 'rate'; min: number; max: number; value: number; isDefault: boolean }
+export type AssumptionField = { key: string; label: string; unit: 'pct' | 'rate' | 'aud'; min: number; max: number; value: number; isDefault: boolean }
 export type HouseForm = {
   eventId: string; name: string; month: string
-  priceCents: number; upfrontCents: number; costsCents: number | null; placeholderCostsCents: number
+  priceCents: number; upfrontCents: number; costsCents: number | null; firstHome: boolean; propertyKind: PropertyKind; useScheme: boolean
   rentMonthlyCents: number; loanTermMonths: number; depositAccountIds: string[]
 }
 export type PersonForm = { key: string; name: string; hasPrivateHospital: boolean; hasHecs: boolean; grossAnnualCents: number; startDate: string }
@@ -107,7 +109,8 @@ function HouseSection({ house, oldGoal, accounts }: { house: HouseForm; oldGoal:
   const s = useSave()
 
   const priceC = toCents(price) ?? 0
-  const placeholder = Math.round(priceC * 0.045)
+  // Blank costs = the WA calculator (duty, Landgate fees, settlement, inspection, LMI, less FHOG), contract date = the month.
+  const placeholder = purchase({ priceCents: priceC, cashCents: toCents(upfront) ?? 0, firstHome: house.firstHome, kind: house.propertyKind, contractDate: `${month || house.month}-01`, useScheme: house.useScheme }).costsCents
   const loan = Math.max(0, priceC - ((toCents(upfront) ?? 0) - (toCents(costs) ?? placeholder)))
   const goalMonth = oldGoal?.date.slice(0, 7)
 
@@ -121,7 +124,7 @@ function HouseSection({ house, oldGoal, accounts }: { house: HouseForm; oldGoal:
   }
 
   return (
-    <Section title={house.name} hint="The headline goal: upfront cash (deposit + duty + costs) by this month. Phase 3 replaces the duty placeholder with a WA duty calculator.">
+    <Section title={house.name} hint="The headline goal: upfront cash (deposit + duty + costs) by this month. Property type, first-home status and the 5% scheme are set on the House tab.">
       {goalMonth && goalMonth !== month && (
         <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
           Not confirmed yet: the plan says {monthLabel(month, { month: 'short', year: 'numeric' })}, but the goal &ldquo;{oldGoal!.name}&rdquo; says {monthLabel(goalMonth, { month: 'short', year: 'numeric' })}. Set the month you want here.
@@ -131,7 +134,7 @@ function HouseSection({ house, oldGoal, accounts }: { house: HouseForm; oldGoal:
         <Field id="h-month" label="Buy in"><input id="h-month" type="month" className={input} value={month} onChange={e => setMonth(e.target.value)} /></Field>
         <Field id="h-price" label="Price ($)"><input id="h-price" inputMode="decimal" className={input} value={price} onChange={e => setPrice(e.target.value)} /></Field>
         <Field id="h-upfront" label="Upfront cash ($)" hint="Deposit + duty + costs"><input id="h-upfront" inputMode="decimal" className={input} value={upfront} onChange={e => setUpfront(e.target.value)} /></Field>
-        <Field id="h-costs" label="Of which duty + costs ($)" hint={costs === '' ? `Blank = estimate ${fmtAUD(placeholder)} (4.5%)` : undefined}>
+        <Field id="h-costs" label="Of which duty + costs ($)" hint={costs === '' ? `Blank = WA calculator: ${fmtAUD(placeholder)}` : 'Clear to use the WA calculator'}>
           <input id="h-costs" inputMode="decimal" className={input} placeholder={dollars(placeholder)} value={costs} onChange={e => setCosts(e.target.value)} />
         </Field>
         <Field id="h-rent" label="Rent that stops ($/mo)" hint="Leave blank if rent isn't in your spending"><input id="h-rent" inputMode="decimal" className={input} value={rent} onChange={e => setRent(e.target.value)} /></Field>
@@ -227,7 +230,7 @@ function RatesSection({ fields, disabled }: { fields: AssumptionField[]; disable
     <Section title="Rates" hint="Yearly rates. Pay and prices step up each 1 July; returns compound monthly. An account's own rate (Track › Accounts) overrides these.">
       <div className="grid grid-cols-2 gap-3">
         {fields.map(f => (
-          <Field key={f.key} id={`a-${f.key}`} label={`${f.label}${f.unit === 'pct' ? ' (%)' : ''}`} hint={fieldErrors[f.key] ?? (f.isDefault ? 'App default' : undefined)}>
+          <Field key={f.key} id={`a-${f.key}`} label={`${f.label}${f.unit === 'pct' ? ' (%)' : f.unit === 'aud' ? ' ($/mo)' : ''}`} hint={fieldErrors[f.key] ?? (f.isDefault ? 'App default' : undefined)}>
             <input id={`a-${f.key}`} inputMode="decimal" disabled={disabled} aria-invalid={!!fieldErrors[f.key]}
               className={`${input} ${fieldErrors[f.key] ? 'border-red-500' : ''}`}
               value={values[f.key]} onChange={e => setValues(v => ({ ...v, [f.key]: e.target.value }))} />

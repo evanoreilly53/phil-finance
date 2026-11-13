@@ -3,7 +3,7 @@
 // keys it changes and inherits the rest from its parent chain, then defaults.
 // All values are estimates for modelling, not advice; verify before relying.
 
-export type AssumptionDef = { label: string; unit: 'pct' | 'rate'; default: number; min: number; max: number }
+export type AssumptionDef = { label: string; unit: 'pct' | 'rate' | 'aud'; default: number; min: number; max: number }
 
 export const ASSUMPTIONS = {
   inflation_pct:          { label: 'Inflation',                 unit: 'pct',  default: 3.0,  min: -5, max: 20 },
@@ -15,6 +15,8 @@ export const ASSUMPTIONS = {
   house_price_growth_pct: { label: 'House price growth',        unit: 'pct',  default: 4.0,  min: -20, max: 25 },
   super_guarantee_pct:    { label: 'Employer super (SG)',       unit: 'pct',  default: 12.0, min: 0, max: 30 },
   fx_eur_aud:             { label: 'EUR → AUD (fallback)',      unit: 'rate', default: 1.65, min: 0.5, max: 5 },
+  // Phase 3 scenario lever: + saves more each month (spend less), − saves less. Whole dollars a month.
+  extra_saving_monthly:   { label: 'Extra saving a month',      unit: 'aud',  default: 0,    min: -20_000, max: 20_000 },
 } as const satisfies Record<string, AssumptionDef>
 
 export type AssumptionKey = keyof typeof ASSUMPTIONS

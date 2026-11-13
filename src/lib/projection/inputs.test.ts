@@ -119,13 +119,22 @@ describe('selectCashflows', () => {
 })
 
 describe('house params + account choices', () => {
-  it('reads the life_events params, with a placeholder for duty + costs', () => {
-    expect(houseParams({ price_cents: $(1_000_000), deposit_cents: $(250_000), loan_term_months: 360 }, null)).toEqual({
-      priceCents: $(1_000_000), upfrontCents: $(250_000), costsCents: $(45_000), costsIsPlaceholder: true, loanTermMonths: 360, rentMonthlyCents: 0,
+  it('reads the life_events params; duty, fees, LMI and FHOG come from the WA calculator', () => {
+    // $1M first home, established: general duty $42,615.50 + Landgate $640.20 + settlement $2,200 + inspection $650
+    expect(houseParams({ price_cents: $(1_000_000), deposit_cents: $(250_000), loan_term_months: 360, first_home_buyer: true, new_build: false }, null, '2028-03-01')).toEqual({
+      priceCents: $(1_000_000), upfrontCents: $(250_000), costsCents: $(46_105.70), costsSource: 'calculated', loanTermMonths: 360, rentMonthlyCents: 0,
+      firstHome: true, propertyKind: 'established', useScheme: false, offsetAccountId: null, extraRepaymentMonthlyCents: 0,
     })
     expect(houseParams({ price_cents: '85000000', upfront_costs_cents: 0, rent_monthly_cents: $(2_600) }, $(100_000))).toMatchObject({
-      priceCents: $(850_000), upfrontCents: $(100_000), costsCents: 0, costsIsPlaceholder: false, rentMonthlyCents: $(2_600),
+      priceCents: $(850_000), upfrontCents: $(100_000), costsCents: 0, costsSource: 'entered', rentMonthlyCents: $(2_600),
     })
+    // $850k on the 5% scheme with $85k: duty $34,890.50, no LMI
+    const scheme = houseParams({ price_cents: $(850_000), deposit_cents: $(85_000), use_deposit_scheme: true, property_kind: 'established' }, null, '2027-09-01')!
+    expect(scheme.costsCents).toBe($(34_890.50 + 395.10 + 225.10 + 2_200 + 650))
+    // New build at $700k: FHOR duty $16,150, no inspection, FHOG $10,000 off
+    const nb = houseParams({ price_cents: $(700_000), deposit_cents: $(150_000), new_build: true }, null, '2027-09-01')!
+    expect(nb.propertyKind).toBe('new')
+    expect(nb.costsCents).toBe($(16_150 + 355.10 + 225.10 + 2_200 - 10_000))
     expect(houseParams({}, null)).toBeNull()
     expect(houseParams(null, null)).toBeNull()
   })

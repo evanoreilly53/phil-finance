@@ -27,12 +27,12 @@ export default async function AssumptionsPage() {
   }))
 
   const ev = events?.[0] ?? null
-  const hp = ev ? houseParams(ev.params, ev.budget_cents) : null
+  const hp = ev ? houseParams(ev.params, ev.budget_cents, ev.event_date) : null
   const acctLike = (accounts ?? []).map(a => ({ id: a.id, name: a.name, type: a.type, currency: a.currency }))
   const house: HouseForm | null = ev && hp ? {
     eventId: ev.id, name: ev.name, month: ev.event_date.slice(0, 7),
-    priceCents: hp.priceCents, upfrontCents: hp.upfrontCents, costsCents: hp.costsIsPlaceholder ? null : hp.costsCents,
-    placeholderCostsCents: Math.round(hp.priceCents * 0.045),
+    priceCents: hp.priceCents, upfrontCents: hp.upfrontCents, costsCents: hp.costsSource === 'entered' ? hp.costsCents : null,
+    firstHome: hp.firstHome, propertyKind: hp.propertyKind, useScheme: hp.useScheme,
     rentMonthlyCents: hp.rentMonthlyCents, loanTermMonths: hp.loanTermMonths,
     depositAccountIds: depositAccountIdsFromParams(ev.params) ?? defaultDepositAccountIds(acctLike),
   } : null

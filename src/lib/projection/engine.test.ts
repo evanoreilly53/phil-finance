@@ -16,7 +16,7 @@ function cashflow(over: Partial<ProjCashflow>): ProjCashflow {
 
 const house = (over: Partial<ProjEvent> = {}): ProjEvent => ({
   id: 'house', name: 'Buy our first home', kind: 'house_purchase', date: '2028-03-01', status: 'planned',
-  house: { priceCents: $(1_000_000), upfrontCents: $(250_000), costsCents: $(45_000), costsIsPlaceholder: true, loanTermMonths: 360, rentMonthlyCents: 0 },
+  house: { priceCents: $(1_000_000), upfrontCents: $(250_000), costsCents: $(45_000), costsSource: 'entered', loanTermMonths: 360, rentMonthlyCents: 0, firstHome: true, propertyKind: 'established', useScheme: false, offsetAccountId: null, extraRepaymentMonthlyCents: 0 },
   ...over,
 })
 
@@ -301,6 +301,47 @@ describe('house purchase', () => {
     expect(m(done, '2028-03').balances['house:house']).toBeUndefined()
     const excl = runProjection({ ...input, excludeEventKinds: ['house_purchase'] })
     expect(m(excl, '2028-03').pins).toHaveLength(0)
+  })
+})
+
+describe('Phase 3: offset, extra repayments, leave', () => {
+  const input = baseInput({
+    months: 60,
+    accounts: [account('joint', 'bank', 300_000), account('off', 'savings', 50_000)],
+    depositAccountIds: ['joint'],
+    events: [house()],
+  })
+
+  it('the repayment is fixed at drawdown; extra repayments are added', () => {
+    const p = runProjection({ ...input, events: [house({ house: { ...house().house!, extraRepaymentMonthlyCents: $(500) } })] })
+    const sched = annuityPayment($(795_000), 6, 360)
+    expect(m(p, '2028-04').cashflow.loanRepaymentCents).toBe(sched + $(500))
+    expect(m(p, '2029-04').cashflow.loanRepaymentCents).toBe(sched + $(500))
+    expectTraceExplainsNetWorth(p)
+  })
+
+  it('an offset account cuts mortgage interest and stops earning interest itself', () => {
+    const withOff = runProjection({ ...input, assumptions: { ...FLAT, cash_return_pct: 4 }, events: [house({ house: { ...house().house!, offsetAccountId: 'off' } })] })
+    const without = runProjection({ ...input, assumptions: { ...FLAT, cash_return_pct: 4 } })
+    // Apr-28: interest on $795k less the offset balance ($50k plus interest earned before the purchase)
+    expect(m(withOff, '2028-04').cashflow.loanInterestCents).toBe(Math.round(($(795_000) - m(withOff, '2028-03').balances.off) * 0.06 / 12))
+    expect(m(without, '2028-04').cashflow.loanInterestCents).toBe($(3_975))
+    // Before the purchase the account still earns savings interest; after, nothing
+    expect(m(withOff, '2028-02').trace.some(t => t.accountId === 'off' && t.kind === 'interest')).toBe(true)
+    expect(m(withOff, '2028-05').trace.some(t => t.accountId === 'off' && t.kind === 'interest')).toBe(false)
+    expectTraceExplainsNetWorth(withOff)
+  })
+
+  it('leave pays the person a share of salary for its months only', () => {
+    const leave: ProjEvent = { id: 'lv', name: 'Rachel on leave', kind: 'leave', date: '2027-02-01', status: 'planned', house: null, leave: { personKey: 'rachel', payPct: 0, endDate: '2027-04-30' } }
+    const p = runProjection(baseInput({ salaries: [rachel, evan], events: [leave] }))
+    expect(m(p, '2027-01').cashflow.takeHomeCents).toBe($(6_740) + $(5_890))
+    expect(m(p, '2027-02').cashflow.takeHomeCents).toBe($(5_890))
+    expect(m(p, '2027-04').cashflow.takeHomeCents).toBe($(5_890))
+    expect(m(p, '2027-05').cashflow.takeHomeCents).toBe($(6_740) + $(5_890))
+    expect(m(p, '2027-02').pins.map(x => x.name)).toEqual(['Rachel on leave'])
+    const half = runProjection(baseInput({ salaries: [rachel], events: [{ ...leave, leave: { ...leave.leave!, payPct: 50 } }] }))
+    expect(m(half, '2027-02').cashflow.grossPayCents).toBe(Math.round($(105_000) / 2 / 12))
   })
 })
 

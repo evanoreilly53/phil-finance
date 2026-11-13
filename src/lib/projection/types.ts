@@ -4,6 +4,7 @@
 import type { AccountType } from '../supabase/database.types'
 import type { AssumptionKey } from '../assumptions'
 import type { FyKey } from '../tax/config'
+import type { PropertyKind } from '../house/duty'
 
 export type Assumptions = Record<AssumptionKey, number>
 
@@ -72,12 +73,29 @@ export type HouseParams = {
   priceCents: number
   /** Total cash needed at purchase: deposit + duty + costs. */
   upfrontCents: number
-  /** Duty + fees inside upfrontCents (lost to net worth). Placeholder until Phase 3. */
+  /** Duty + fees + LMI − grants inside upfrontCents (lost to net worth). Can be negative (grant > costs). */
   costsCents: number
-  costsIsPlaceholder: boolean
+  /** 'calculated' = WA duty/fees/LMI/FHOG calculator; 'entered' = typed in by you. */
+  costsSource: 'calculated' | 'entered'
   loanTermMonths: number
   /** Rent that stops once you move in (optional). */
   rentMonthlyCents: number
+  firstHome: boolean
+  propertyKind: PropertyKind
+  /** Use the 5% Deposit Scheme if eligible (no LMI). */
+  useScheme: boolean
+  /** An existing cash account that becomes the mortgage offset after purchase. */
+  offsetAccountId: string | null
+  /** Paid on top of the scheduled repayment each month. */
+  extraRepaymentMonthlyCents: number
+}
+
+export type LeaveParams = {
+  personKey: string
+  /** Share of normal pay received while on leave (0 = unpaid). */
+  payPct: number
+  /** Last day of the leave (inclusive). */
+  endDate: string
 }
 
 export type ProjEvent = {
@@ -87,6 +105,7 @@ export type ProjEvent = {
   date: string
   status: 'planned' | 'done' | 'cancelled'
   house: HouseParams | null
+  leave?: LeaveParams | null
 }
 
 export type SpendingLine = {
