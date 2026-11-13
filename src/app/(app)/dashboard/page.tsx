@@ -30,7 +30,7 @@ export default async function DashboardPage() {
       .gte('date', `${thisMonth}-01`).lt('date', `${nextMonth}-01`).order('id').range(from, to)),
     supabase.from('categories').select('id, parent_id, kind'),
     supabase.from('budgets').select('category_id, monthly_cents, effective_from'),
-    supabase.from('recurring_transactions').select('id', { count: 'exact' }).eq('is_active', true).lte('next_due', today),
+    supabase.from('planned_cashflows').select('id', { count: 'exact' }).eq('status', 'planned').neq('frequency', 'once').is('scenario_id', null).eq('is_gross', false).is('event_id', null).eq('currency', 'AUD').lte('start_date', today),
     loadPlan(supabase).catch(() => null),
   ])
 

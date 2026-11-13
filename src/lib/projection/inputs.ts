@@ -4,6 +4,7 @@
 import { budgetsForMonth, rootCategoryId, spendByCategory, UNCATEGORISED, type BudgetRow, type CategoryNode, type SpendTx } from '../budgets'
 import { CASH_TYPES, INVEST_TYPES } from './engine'
 import { OCCURRENCES_PER_YEAR } from './schedule'
+import { RECURRING_IN_SPENDING_SOURCES } from '../plannedItems'
 import { isPropertyKind, type PropertyKind } from '../house/duty'
 import { purchase } from '../house/purchase'
 import type { Frequency, HouseParams, Indexation, LeaveParams, ProjAccount, ProjCashflow, Salary, SpendingBaseline, SpendingLine } from './types'
@@ -100,8 +101,8 @@ export function selectCashflows(rows: readonly CashflowRow[], opts: { today: str
       })
       continue
     }
-    if (r.source_table === 'recurring_transactions' && r.frequency !== 'once' && !r.event_id) {
-      skipped.push({ id: r.id, description: r.description, reason: 'Recurring item copied from Settings: already counted in your recent spending or pay' })
+    if (r.source_table && RECURRING_IN_SPENDING_SOURCES.has(r.source_table) && r.frequency !== 'once' && !r.event_id) {
+      skipped.push({ id: r.id, description: r.description, reason: 'Recurring item marked “already in our spending” in Settings: counted in your recent spending or pay' })
       continue
     }
     if (r.frequency === 'once' && r.start_date < opts.today) {

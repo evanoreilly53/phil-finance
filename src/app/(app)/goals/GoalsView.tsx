@@ -28,15 +28,8 @@ export type Goal = {
   sort_order: number | null
 }
 
-export type Outflow = {
-  id: string
-  description: string
-  amount_cents: number
-  due_date: string
-  status: 'planned' | 'paid' | 'cancelled'
-  category: string | null
-  notes: string | null
-}
+export type { Outflow } from '@/lib/plannedItems'
+import type { Outflow } from '@/lib/plannedItems'
 
 const GOAL_COLOURS = ['bg-indigo-500', 'bg-pink-500', 'bg-sky-500', 'bg-purple-500', 'bg-green-500']
 
@@ -89,7 +82,8 @@ type Props = {
 export default function GoalsView({ goals, outflows, currentNW, projections = {}, monthlyNWData = [] }: Props) {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Perth' }).format(new Date())
 
-  const upcoming = outflows.filter(o => o.due_date >= today && o.status !== 'cancelled').slice(0, 10)
+  // Overdue unpaid items stay listed (the projection skips them until they're marked paid or re-dated).
+  const upcoming = outflows.filter(o => o.status === 'planned' || (o.due_date >= today && o.status !== 'cancelled')).slice(0, 12)
   const paid     = outflows.filter(o => o.status === 'paid')
 
   const totalOutflowRemaining = upcoming

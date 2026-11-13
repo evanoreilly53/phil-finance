@@ -2,6 +2,7 @@
 
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
+import { advanceDate, recurringToCashflow, type RecurrenceFreq, type RecurringInput } from '@/lib/plannedItems'
 
 // ── App Settings ──────────────────────────────────────────────────────────────
 
@@ -68,46 +69,51 @@ export async function deleteRule(id: string): Promise<{ error?: string }> {
   return {}
 }
 
-// ── Recurring Transactions ────────────────────────────────────────────────────
+// ── Recurring ─────────────────────────────────────────────────────────────────
+// Since Phase 3 recurring items are planned_cashflows rows (frequency ≠ once),
+// so there's one list the projection reads. "Already in our spending" items
+// are skipped by the projection (they're in your recent average); untick it
+// for something new, like a gym membership starting next month. The old
+// recurring_transactions table is kept as an archive and no longer written.
 
-export type RecurringInput = {
-  description: string
-  amount_cents: number
-  currency: string
-  category_id?: string | null
-  account_id?: string | null
-  owner: 'joint' | 'rachel' | 'evan'
-  recurrence: 'weekly' | 'fortnightly' | 'monthly' | 'quarterly' | 'annual'
-  day_of_month?: number | null
-  next_due: string
-  is_active: boolean
-  notes?: string | null
+export type { RecurringInput } from '@/lib/plannedItems'
+
+const RECURRING_PATHS = ['/settings', '/dashboard', '/future', '/house']
+function revalidateRecurring() { for (const p of RECURRING_PATHS) revalidatePath(p) }
+
+function validRecurring(input: RecurringInput): string | null {
+  if (!input.description?.trim()) return 'Add a description'
+  if (!Number.isSafeInteger(input.amount_cents) || input.amount_cents === 0) return 'Enter a valid amount'
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.next_due)) return 'Pick the next due date'
+  if (!['weekly', 'fortnightly', 'monthly', 'quarterly', 'annual'].includes(input.recurrence)) return 'Pick how often'
+  return null
 }
+
+const onlyRecurring = <Q extends { neq: (c: string, v: string) => Q; is: (c: string, v: null) => Q; eq: (c: string, v: boolean) => Q }>(q: Q) =>
+  q.neq('frequency', 'once').is('scenario_id', null).eq('is_gross', false)
 
 export async function addRecurring(input: RecurringInput): Promise<{ error?: string }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
-
-  const { error } = await supabase
-    .from('recurring_transactions')
-    .insert({ ...input, created_by: user.id })
-
+  const bad = validRecurring(input)
+  if (bad) return { error: bad }
+  const { error } = await supabase.from('planned_cashflows').insert({ ...recurringToCashflow(input), created_by: user.id })
   if (error) return { error: error.message }
-  revalidatePath('/settings')
-  revalidatePath('/dashboard')
+  revalidateRecurring()
   return {}
 }
 
-export async function updateRecurring(id: string, input: Partial<RecurringInput>): Promise<{ error?: string }> {
+export async function updateRecurring(id: string, input: RecurringInput): Promise<{ error?: string }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
-
-  const { error } = await supabase.from('recurring_transactions').update(input).eq('id', id)
+  const bad = validRecurring(input)
+  if (bad) return { error: bad }
+  const { data: row } = await supabase.from('planned_cashflows').select('source_table').eq('id', id).maybeSingle()
+  const { error } = await onlyRecurring(supabase.from('planned_cashflows').update(recurringToCashflow(input, row?.source_table ?? null)).eq('id', id))
   if (error) return { error: error.message }
-  revalidatePath('/settings')
-  revalidatePath('/dashboard')
+  revalidateRecurring()
   return {}
 }
 
@@ -115,16 +121,14 @@ export async function deleteRecurring(id: string): Promise<{ error?: string }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
-
-  const { error } = await supabase.from('recurring_transactions').delete().eq('id', id)
+  const { error } = await onlyRecurring(supabase.from('planned_cashflows').delete().eq('id', id))
   if (error) return { error: error.message }
-  revalidatePath('/settings')
-  revalidatePath('/dashboard')
+  revalidateRecurring()
   return {}
 }
 
 export async function postRecurring(
-  recurring: { id: string; description: string; amount_cents: number; currency: string; category_id: string | null; account_id: string | null; owner: 'joint' | 'rachel' | 'evan'; next_due: string; recurrence: 'weekly' | 'fortnightly' | 'monthly' | 'quarterly' | 'annual' }
+  recurring: { id: string; description: string; amount_cents: number; currency: string; category_id: string | null; account_id: string | null; owner: 'joint' | 'rachel' | 'evan'; next_due: string; recurrence: RecurrenceFreq }
 ): Promise<{ error?: string }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -151,29 +155,14 @@ export async function postRecurring(
   })
   if (txError) return { error: txError.message }
 
-  // Advance next_due
-  const nextDue = advanceDate(recurring.next_due, recurring.recurrence)
-  const { error: upErr } = await supabase.from('recurring_transactions').update({ next_due: nextDue }).eq('id', recurring.id)
+  // Advance the next due date (the schedule's anchor; past occurrences don't affect the projection).
+  const { error: upErr } = await onlyRecurring(supabase.from('planned_cashflows')
+    .update({ start_date: advanceDate(recurring.next_due, recurring.recurrence) }).eq('id', recurring.id))
   if (upErr) return { error: upErr.message }
 
   revalidatePath('/dashboard')
+  revalidatePath('/settings')
   revalidatePath('/transactions')
   revalidateTag('transactions', 'max')
   return {}
-}
-
-function advanceDate(dateStr: string, recurrence: string): string {
-  const [y, m, d] = dateStr.split('-').map(Number)
-  const date = new Date(y, m - 1, d)
-  switch (recurrence) {
-    case 'weekly':      date.setDate(date.getDate() + 7);        break
-    case 'fortnightly': date.setDate(date.getDate() + 14);       break
-    case 'monthly':     date.setMonth(date.getMonth() + 1);      break
-    case 'quarterly':   date.setMonth(date.getMonth() + 3);      break
-    case 'annual':      date.setFullYear(date.getFullYear() + 1); break
-  }
-  const yy = date.getFullYear()
-  const mm = String(date.getMonth() + 1).padStart(2, '0')
-  const dd = String(date.getDate()).padStart(2, '0')
-  return `${yy}-${mm}-${dd}`
 }

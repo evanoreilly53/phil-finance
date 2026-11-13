@@ -5,13 +5,18 @@ import { monthlyNetWorth, currentNetWorthCents } from '@/lib/balances'
 import { loadPlan } from '@/lib/projection/load'
 import { solveGoal } from '@/lib/projection/goals'
 import { monthDiff } from '@/lib/projection/schedule'
+import { cashflowToOutflow, type CashflowItemRow } from '@/lib/plannedItems'
 
 export default async function GoalsPage() {
   const supabase = await createClient()
 
-  const [{ data: goals }, { data: outflows }, snapshots, { data: accounts }, plan] = await Promise.all([
+  const [{ data: goals }, { data: payments }, { data: categories }, snapshots, { data: accounts }, plan] = await Promise.all([
     supabase.from('goals').select('*').eq('is_active', true).order('sort_order'),
-    supabase.from('planned_outflows').select('*').neq('status', 'cancelled').order('due_date'),
+    // One-off payments live in planned_cashflows (what the projection reads). Wedding EUR balances stay on the Wedding page.
+    supabase.from('planned_cashflows').select('id, description, kind, person_key, amount_cents, currency, frequency, start_date, status, category_id, account_id, notes, source_table')
+      .eq('kind', 'expense').eq('frequency', 'once').is('scenario_id', null).eq('currency', 'AUD').neq('status', 'cancelled')
+      .or('source_table.is.null,source_table.neq.wedding_items').order('start_date'),
+    supabase.from('categories').select('id, name'),
     fetchAll((from, to) => supabase
       .from('account_snapshots')
       .select('account_id, aud_balance_cents, date')
@@ -21,6 +26,9 @@ export default async function GoalsPage() {
     supabase.from('accounts').select('id').eq('is_active', true),
     loadPlan(supabase),
   ])
+
+  const catName = new Map((categories ?? []).map(c => [c.id, c.name]))
+  const outflows = ((payments ?? []) as CashflowItemRow[]).map(r => cashflowToOutflow(r, id => catName.get(id)))
 
   // Same basis as the Net Worth page: active accounts, balances carried forward
   const accountIds = new Set((accounts ?? []).map(a => a.id))
@@ -40,7 +48,7 @@ export default async function GoalsPage() {
   return (
     <GoalsView
       goals={goals ?? []}
-      outflows={outflows ?? []}
+      outflows={outflows}
       currentNW={currentNW}
       projections={projections}
       monthlyNWData={monthlyNW}

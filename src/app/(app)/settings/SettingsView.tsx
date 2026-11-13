@@ -7,13 +7,7 @@ import type { Category, Account } from '../transactions/TransactionList'
 import { fmtAUD } from '@/lib/format'
 
 type Rule = { id: string; pattern: string; category_id: string; owner: string | null; priority: number; is_active: boolean }
-type RecurrenceFreq = 'weekly' | 'fortnightly' | 'monthly' | 'quarterly' | 'annual'
-type Recurring = {
-  id: string; description: string; amount_cents: number; currency: string
-  category_id: string | null; account_id: string | null
-  owner: 'joint' | 'rachel' | 'evan'; recurrence: RecurrenceFreq
-  day_of_month: number | null; next_due: string; is_active: boolean; notes: string | null
-}
+import type { Recurring, RecurrenceFreq } from '@/lib/plannedItems'
 
 type Tab = 'general' | 'rules' | 'recurring'
 
@@ -131,6 +125,7 @@ function RecurringModal({ categories, accounts, rec, onClose }: {
   const [nextDue, setNextDue]   = useState(rec?.next_due ?? new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Perth' }).format(new Date()))
   const [active, setActive]     = useState(rec?.is_active ?? true)
   const [notes, setNotes]       = useState(rec?.notes ?? '')
+  const [inSpending, setInSpending] = useState(rec?.in_spending ?? true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -155,6 +150,7 @@ function RecurringModal({ categories, accounts, rec, onClose }: {
       next_due: nextDue,
       is_active: active,
       notes: notes.trim() || null,
+      in_spending: inSpending,
     }
     const result = rec ? await updateRecurring(rec.id, input) : await addRecurring(input)
     if (result.error) { setError(result.error); setSubmitting(false); return }
@@ -238,6 +234,10 @@ function RecurringModal({ categories, accounts, rec, onClose }: {
         <label className="flex items-center gap-3 cursor-pointer">
           <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} className="w-4 h-4 rounded accent-indigo-500" />
           <span className="text-sm text-gray-300">Active</span>
+        </label>
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input type="checkbox" checked={inSpending} onChange={e => setInSpending(e.target.checked)} className="w-4 h-4 mt-0.5 rounded accent-indigo-500" />
+          <span className="text-sm text-gray-300">Already in our spending<span className="block text-[11px] text-gray-500">Ticked: the projection skips it (it&apos;s in your recent average already). Untick for something new, so the projection adds it.</span></span>
         </label>
         {error && <p role="alert" className="text-red-400 text-sm">{error}</p>}
         <button onClick={save} disabled={submitting} className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold rounded-xl py-3 text-sm transition-colors">
@@ -433,7 +433,7 @@ export default function SettingsView({ settings, rules, recurring, categories, a
                         {!r.is_active && <span className="text-xs text-gray-600">inactive</span>}
                       </div>
                       <p className="text-xs text-gray-500 mt-0.5">
-                        {fmtAUD(r.amount_cents, { signed: true })} · {r.recurrence} · next {r.next_due}
+                        {fmtAUD(r.amount_cents, { signed: true })} · {r.recurrence} · next {r.next_due}{r.in_spending ? '' : ' · adds to projection'}
                         {acct ? ` · ${acct.name}` : ''}{cat ? ` · ${cat.name}` : ''}
                       </p>
                     </div>
