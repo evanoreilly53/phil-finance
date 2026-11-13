@@ -166,16 +166,23 @@ export function buildPlan(d: PlanData, opts: { months?: number; scenarioId?: str
 
 export type DepositGoal = GoalSolve & { eventName: string; currentCents: number }
 
+/** The projection input the deposit goal runs on: no purchase, horizon well past the house month. */
+export function depositGoalInput(plan: Plan): ProjectionInput | null {
+  if (!plan.house) return null
+  const byMonth = plan.house.date.slice(0, 7)
+  const months = Math.max(plan.input.months, monthDiff(plan.input.startMonth, byMonth) + 1 + 120)
+  return { ...plan.input, months: Math.min(months, 600), excludeEventKinds: ['house_purchase'] }
+}
+
 /**
  * The headline goal: the house's upfront cash (deposit + costs) by the house
  * date. Run WITHOUT the purchase, so "when do we have the deposit?" isn't
  * confused by the deposit being spent.
  */
 export function depositGoal(plan: Plan): DepositGoal | null {
-  if (!plan.house) return null
+  const input = depositGoalInput(plan)
+  if (!plan.house || !input) return null
   const byMonth = plan.house.date.slice(0, 7)
-  const months = Math.max(plan.input.months, monthDiff(plan.input.startMonth, byMonth) + 1 + 120)
-  const input: ProjectionInput = { ...plan.input, months: Math.min(months, 600), excludeEventKinds: ['house_purchase'] }
   const solve = solveGoal(input, 'depositPotCents', plan.house.house.upfrontCents, byMonth)
   const opening = plan.input.accounts.filter(x => plan.input.depositAccountIds.includes(x.id) || x.id === plan.input.sweepAccountId)
     .reduce((s, x) => s + x.balanceCents, 0)

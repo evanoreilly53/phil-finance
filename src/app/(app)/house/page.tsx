@@ -141,6 +141,9 @@ export default async function HousePage({ searchParams }: { searchParams: Search
         fys={tl.fys}
         cashRatePct={plan.input.assumptions.cash_return_pct}
       />
+      <p className="text-[11px] text-gray-500 px-1 -mt-2">
+        FHSS contributions share the concessional cap with employer super. See what&apos;s left this year in <Link href={'/income#super' as Route} className="text-indigo-400">Track › Income › Super cap</Link>.
+      </p>
 
       <MortgageCard
         scenarioId={scenarioId} scenarioLabel={scenarioLabel}

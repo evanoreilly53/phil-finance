@@ -62,5 +62,5 @@ export function runInsights(p: {
 }
 
 export type { Insight, InsightContext, InsightStateRow } from './types'
-export { depositDaysLabel } from './goalImpact'
+export { depositDaysLabel } from './labels'
 export { MAX_SHOWN } from './rank'

@@ -10,7 +10,9 @@ describe('nav map', () => {
     expect(sectionFor('/goals')).toBe('future')
     expect(sectionFor('/future')).toBe('future')
     expect(sectionFor('/house')).toBe('house')
-    for (const p of ['/more', '/more/budgets', '/settings', '/wedding', '/insights']) expect(sectionFor(p)).toBe('more')
+    for (const p of ['/more', '/more/budgets', '/settings', '/wedding']) expect(sectionFor(p)).toBe('more')
+    expect(sectionFor('/insights')).toBe('home') // the monthly check-in
+    expect(sectionFor('/track/bills')).toBe('track')
   })
   it('does not match on a bare prefix', () => {
     expect(sectionFor('/housework')).toBeNull()
@@ -20,6 +22,7 @@ describe('nav map', () => {
     expect(activeTrackTab('/transactions/review')).toBe('/transactions')
     expect(activeTrackTab('/networth')).toBe('/track/accounts')
     expect(activeTrackTab('/dashboard')).toBeNull()
+    expect(activeTrackTab('/track/bills')).toBe('/track/bills')
   })
   it('has a title for every routed page', () => {
     expect(PAGE_TITLES['/wedding']).toBe('Our Wedding 2026')

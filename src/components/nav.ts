@@ -5,11 +5,11 @@
 export type Section = 'home' | 'track' | 'future' | 'house' | 'more'
 
 const SECTION_PREFIXES: [Section, string[]][] = [
-  ['home',   ['/dashboard']],
+  ['home',   ['/dashboard', '/insights']],
   ['track',  ['/track', '/spending', '/income', '/transactions', '/networth']],
   ['future', ['/future', '/goals']],
   ['house',  ['/house']],
-  ['more',   ['/more', '/settings', '/wedding', '/insights']],
+  ['more',   ['/more', '/settings', '/wedding']],
 ]
 
 function under(pathname: string, prefix: string): boolean {
@@ -27,6 +27,7 @@ export const TRACK_TABS = [
   { href: '/spending',       label: 'Spending',     match: ['/spending'] },
   { href: '/income',         label: 'Income',       match: ['/income'] },
   { href: '/transactions',   label: 'Transactions', match: ['/transactions'] },
+  { href: '/track/bills',    label: 'Bills',        match: ['/track/bills'] },
   { href: '/track/accounts', label: 'Accounts',     match: ['/track/accounts', '/networth'] },
 ] as const
 
@@ -43,7 +44,8 @@ export const PAGE_TITLES: Record<string, string> = {
   '/transactions':         'Transactions',
   '/transactions/import':  'Import',
   '/transactions/review':  'Review',
-  '/insights':             'Insights',
+  '/insights':             'Check-in',
+  '/track/bills':          'Bills',
   '/income':               'Income',
   '/settings':             'Settings',
   '/track/accounts':       'Accounts',

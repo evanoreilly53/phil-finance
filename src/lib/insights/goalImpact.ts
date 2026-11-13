@@ -60,12 +60,4 @@ export function attachDepositDays(
   })
 }
 
-/** "12 days sooner", "3 months sooner", "about the same". */
-export function depositDaysLabel(days: number | null | undefined): string | null {
-  if (days === null || days === undefined) return null
-  const a = Math.abs(days)
-  if (a < 1) return 'about the same deposit date'
-  const when = days > 0 ? 'sooner' : 'later'
-  if (a < 60) return `deposit ~${a} day${a === 1 ? '' : 's'} ${when}`
-  return `deposit ~${Math.round(a / 30.4)} months ${when}`
-}
+export { depositDaysLabel } from './labels'

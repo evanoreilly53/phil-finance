@@ -1,20 +1,22 @@
 import Link from 'next/link'
 import type { Route } from 'next'
-import { ClipboardCheck, TrendingDown, TrendingUp } from 'lucide-react'
+import { ClipboardCheck, TrendingDown, TrendingUp, ChevronRight } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
 import { fetchAll } from '@/lib/supabase/fetchAll'
 import { fmtAUD, monthLabel, perthMonthKey, addMonths } from '@/lib/format'
 import { currentNetWorthCents, monthlyNetWorth } from '@/lib/balances'
 import { monthSummary, netWorthChange } from '@/lib/checkin'
-import { loadPlan, depositGoal, type DepositGoal } from '@/lib/projection/load'
+import type { DepositGoal } from '@/lib/projection/load'
+import { loadCheckin, type CheckinData } from '@/lib/insights/load'
 import { perthToday } from '@/lib/import/dates'
 import DepositGoalCard from '@/components/DepositGoalCard'
+import InsightCard from '@/components/InsightCard'
 import NWSparkline from './NWSparkline'
 import DataHealth from './DataHealth'
 
 // Home: the monthly money check-in. One hero number (net worth), one hero goal
 // (house deposit with its projected date), this month vs budget, and the
-// data-health prompts. Insights (Phase 4) get the slot below; nothing is faked.
+// data-health prompts, plus the top three check-in insights (Phase 4).
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -22,7 +24,7 @@ export default async function DashboardPage() {
   const nextMonth = addMonths(thisMonth, 1)
   const today = perthToday()
 
-  const [snapshots, { data: accounts }, monthTxs, { data: categories }, { data: budgets }, { data: dueRecurring }, plan] = await Promise.all([
+  const [snapshots, { data: accounts }, monthTxs, { data: categories }, { data: budgets }, { data: dueRecurring }, checkin] = await Promise.all([
     fetchAll((from, to) => supabase.from('account_snapshots').select('account_id, aud_balance_cents, date')
       .order('date', { ascending: true }).order('id', { ascending: true }).range(from, to)),
     supabase.from('accounts').select('id').eq('is_active', true),
@@ -31,7 +33,7 @@ export default async function DashboardPage() {
     supabase.from('categories').select('id, parent_id, kind'),
     supabase.from('budgets').select('category_id, monthly_cents, effective_from'),
     supabase.from('planned_cashflows').select('id', { count: 'exact' }).eq('status', 'planned').neq('frequency', 'once').is('scenario_id', null).eq('is_gross', false).is('event_id', null).eq('currency', 'AUD').lte('start_date', today),
-    loadPlan(supabase).catch(() => null),
+    loadCheckin(supabase, { recordLog: true }).catch(() => null as CheckinData | null),
   ])
 
   // Net worth: active accounts, last known balance carried forward
@@ -42,8 +44,7 @@ export default async function DashboardPage() {
   const spark = monthly.slice(-12).map(m => ({ date: `${m.mk}-01`, total: m.cents }))
 
   const month = monthSummary(monthTxs, categories ?? [], budgets ?? [], thisMonth)
-  let deposit: DepositGoal | null = null
-  try { deposit = plan ? depositGoal(plan) : null } catch { deposit = null }
+  const deposit: DepositGoal | null = checkin?.deposit ?? null
 
   const overBudget = month.budgetCents > 0 && month.spentCents > month.budgetCents
   const dueCount = (dueRecurring ?? []).length
@@ -100,14 +101,29 @@ export default async function DashboardPage() {
         </div>
       </Link>
 
-      {/* Check-in slot: the insights engine arrives in Phase 4 */}
-      <section className="bg-gray-900/60 rounded-2xl border border-dashed border-gray-800 p-4 flex items-start gap-3">
-        <ClipboardCheck size={16} className="text-gray-600 mt-0.5 flex-shrink-0" />
-        <div className="text-xs text-gray-500">
-          <p className="text-gray-400">Check-in</p>
-          <p>Up to three ranked things worth a look will appear here once the insights engine lands.</p>
-          {dueCount > 0 && <p className="mt-1"><Link href={'/settings' as Route} className="text-indigo-400">{dueCount} recurring item{dueCount === 1 ? '' : 's'} due to post →</Link></p>}
+      {/* Check-in: at most three ranked insights, in dollars and deposit days */}
+      <section aria-labelledby="checkin-h" className="space-y-2">
+        <div className="flex items-center justify-between px-1">
+          <h2 id="checkin-h" className="flex items-center gap-2 text-xs text-gray-500 uppercase tracking-wider">
+            <ClipboardCheck size={13} /> Check-in{checkin && checkin.ranked.shown.length > 0 && ` · ${checkin.ranked.shown.length} thing${checkin.ranked.shown.length === 1 ? '' : 's'} worth a look`}
+          </h2>
+          <Link href={'/insights' as Route} className="flex items-center text-xs text-indigo-400">Monthly check-in <ChevronRight size={13} /></Link>
         </div>
+        {!checkin ? (
+          <p className="bg-gray-900/60 rounded-2xl border border-dashed border-gray-800 p-4 text-xs text-gray-500">The check-in couldn&apos;t be worked out right now.</p>
+        ) : checkin.ranked.shown.length === 0 ? (
+          <p className="bg-gray-900/60 rounded-2xl border border-dashed border-gray-800 p-4 text-xs text-gray-500">
+            Nothing stands out this month.{checkin.ranked.hidden.length > 0 && ` ${checkin.ranked.hidden.length} item${checkin.ranked.hidden.length === 1 ? ' is' : 's are'} done, snoozed or marked intentional.`}
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {checkin.ranked.shown.map(i => <InsightCard key={i.key} insight={i} today={checkin.ctx.today} canSave={checkin.statesAvailable} />)}
+          </ul>
+        )}
+        {checkin && checkin.ranked.more.length > 0 && (
+          <p className="text-[11px] text-gray-500 px-1"><Link href={'/insights#all' as Route} className="text-indigo-400">See all ({checkin.ranked.more.length} more) →</Link></p>
+        )}
+        {dueCount > 0 && <p className="text-[11px] text-gray-500 px-1"><Link href={'/settings' as Route} className="text-indigo-400">{dueCount} recurring item{dueCount === 1 ? '' : 's'} due to post →</Link></p>}
       </section>
 
       {/* Review queue prompt + data freshness strip */}

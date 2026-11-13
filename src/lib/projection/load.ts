@@ -11,7 +11,7 @@ import { BASELINE_EXCLUDE, spendingBaseline, type CashflowRow } from './inputs'
 import { buildPlan, type AccountRow, type EventRow, type HouseholdMember, type Plan, type PlanData } from './plan'
 import type { ScenarioRow } from './scenarios'
 
-export { buildPlan, depositGoal, type DepositGoal, type HouseEvent, type Plan, type PlanData } from './plan'
+export { buildPlan, depositGoal, depositGoalInput, type DepositGoal, type HouseEvent, type Plan, type PlanData } from './plan'
 
 type Supabase = Awaited<ReturnType<typeof createClient>>
 
@@ -31,7 +31,7 @@ export async function fetchPlanData(supabase: Supabase): Promise<PlanData> {
     supabase.from('people').select('key, display_name, has_private_hospital, has_hecs, sort_order').order('sort_order'),
     supabase.from('scenarios').select('id, name, description, is_baseline, parent_scenario_id, sort_order').eq('is_archived', false).order('sort_order').order('created_at'),
     supabase.from('assumptions').select('scenario_id, key, value'),
-    supabase.from('life_events').select('id, scenario_id, name, kind, event_date, end_date, status, budget_cents, params').eq('is_archived', false).order('event_date'),
+    supabase.from('life_events').select('id, scenario_id, name, kind, event_date, end_date, status, budget_cents, params').or('is_archived.eq.false,kind.eq.wedding').order('event_date'),
     fetchAll((from, to) => supabase.from('planned_cashflows')
       .select('id, description, kind, person_key, amount_cents, currency, is_gross, frequency, start_date, end_date, indexation, indexation_pct, account_id, to_account_id, event_id, status, source_table, scenario_id')
       .eq('status', 'planned').order('start_date').order('id').range(from, to)),

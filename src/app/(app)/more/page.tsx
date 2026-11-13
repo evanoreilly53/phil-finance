@@ -1,8 +1,9 @@
 import Link from 'next/link'
 import type { Route } from 'next'
 import type { ElementType } from 'react'
-import { Target, TrendingUp, Lightbulb, PiggyBank, Settings, Heart, Upload, Wallet, ChevronRight, SlidersHorizontal, Layers } from 'lucide-react'
+import { Target, TrendingUp, Lightbulb, PiggyBank, Settings, Heart, Upload, Wallet, ChevronRight, SlidersHorizontal, Layers, Repeat } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
+import { weddingArchiveState } from '@/lib/wedding'
 
 type Item = { href: string; label: string; hint: string; icon: ElementType }
 
@@ -14,7 +15,7 @@ const GROUPS: { title: string; items: Item[] }[] = [
       { href: '/future/scenarios', label: 'Scenarios', hint: 'What-ifs: buy earlier, one income, rates', icon: Layers },
       { href: '/goals',        label: 'Goals',        hint: 'Goal list and planned payments',       icon: Target },
       { href: '/more/budgets', label: 'Budgets',      hint: 'Light monthly targets per category',   icon: PiggyBank },
-      { href: '/insights',     label: 'Insights',     hint: 'Replaced by the Home check-in later',  icon: Lightbulb },
+      { href: '/insights',     label: 'Monthly check-in', hint: 'What happened, budgets, top 3 things to look at', icon: Lightbulb },
     ],
   },
   {
@@ -22,6 +23,7 @@ const GROUPS: { title: string; items: Item[] }[] = [
     items: [
       { href: '/track/accounts',      label: 'Accounts',           hint: 'Assets, debts and data freshness', icon: Wallet },
       { href: '/networth',            label: 'Net worth',          hint: 'History and balance updates',      icon: TrendingUp },
+      { href: '/track/bills',         label: 'Bills & subscriptions', hint: 'Recurring charges and what is due', icon: Repeat },
       { href: '/transactions/import', label: 'Import bank CSV',    hint: 'CommBank, AIB or any CSV',         icon: Upload },
     ],
   },
@@ -35,14 +37,17 @@ const GROUPS: { title: string; items: Item[] }[] = [
 
 export default async function MorePage() {
   const supabase = await createClient()
-  // The wedding stays reachable here; it moves to an Archive once every item is paid.
-  const { data: wedding } = await supabase.from('wedding_items').select('status')
-  const open = (wedding ?? []).filter(w => w.status !== 'paid' && w.status !== 'cancelled').length
+  // The wedding stays reachable here; once archived it moves to Archive as a read-only page.
+  const [{ data: wedding }, { data: event }] = await Promise.all([
+    supabase.from('wedding_items').select('status, budget_aud_cents, spent_aud_cents'),
+    supabase.from('life_events').select('is_archived, params').eq('kind', 'wedding').order('created_at').limit(1).maybeSingle(),
+  ])
+  const w = weddingArchiveState(wedding ?? [], event ?? null)
   const weddingItem: Item = {
     href: '/wedding', label: 'Our Wedding 2026', icon: Heart,
-    hint: open > 0 ? `${open} item${open === 1 ? '' : 's'} still to pay` : 'All paid: ready to archive',
+    hint: w.archived ? 'Read-only record: budget vs actual, total in AUD' : w.openItems > 0 ? `${w.openItems} item${w.openItems === 1 ? '' : 's'} still to pay` : 'All paid',
   }
-  const groups = [...GROUPS, { title: open > 0 ? 'Events' : 'Archive', items: [weddingItem] }]
+  const groups = [...GROUPS, { title: w.archived ? 'Archive' : 'Events', items: [weddingItem] }]
 
   return (
     <div className="space-y-5">
