@@ -52,4 +52,5 @@ export const PAGE_TITLES: Record<string, string> = {
   '/more':                 'More',
   '/more/budgets':         'Budgets',
   '/more/assumptions':     'Assumptions',
+  '/future/scenarios':     'Scenarios',
 }

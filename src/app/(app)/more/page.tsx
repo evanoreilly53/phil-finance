@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import type { Route } from 'next'
 import type { ElementType } from 'react'
-import { Target, TrendingUp, Lightbulb, PiggyBank, Settings, Heart, Upload, Wallet, ChevronRight, SlidersHorizontal } from 'lucide-react'
+import { Target, TrendingUp, Lightbulb, PiggyBank, Settings, Heart, Upload, Wallet, ChevronRight, SlidersHorizontal, Layers } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
 
 type Item = { href: string; label: string; hint: string; icon: ElementType }
@@ -11,6 +11,7 @@ const GROUPS: { title: string; items: Item[] }[] = [
     title: 'Plan',
     items: [
       { href: '/more/assumptions', label: 'Assumptions', hint: 'House date, salaries, rates for the projection', icon: SlidersHorizontal },
+      { href: '/future/scenarios', label: 'Scenarios', hint: 'What-ifs: buy earlier, one income, rates', icon: Layers },
       { href: '/goals',        label: 'Goals',        hint: 'Goal list and planned payments',       icon: Target },
       { href: '/more/budgets', label: 'Budgets',      hint: 'Light monthly targets per category',   icon: PiggyBank },
       { href: '/insights',     label: 'Insights',     hint: 'Replaced by the Home check-in later',  icon: Lightbulb },

@@ -15,6 +15,8 @@ type Props = {
   pins: Pin[]
   years: number
   selected: string | null
+  /** Extra query to keep when opening a month (e.g. the scenario). */
+  query?: string
 }
 
 const SERIES = [
@@ -24,14 +26,14 @@ const SERIES = [
 ] as const
 
 /** Projected net worth / cash / super. Tap a month to open its ledger below. */
-export default function FutureChart({ points, pins, years, selected }: Props) {
+export default function FutureChart({ points, pins, years, selected, query = '' }: Props) {
   const router = useRouter()
   const selectedLabel = points.find(p => p.month === selected)?.label
   const last = points[points.length - 1]
 
   function open(month: string | undefined) {
     if (!month || month === 'now') return
-    router.push(`/future?years=${years}&m=${month}#ledger` as Route, { scroll: false })
+    router.push(`/future?years=${years}${query}&m=${month}#ledger` as Route, { scroll: false })
   }
 
   return (
