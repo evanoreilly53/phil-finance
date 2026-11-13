@@ -9,6 +9,7 @@ import { lognormalRatio, cohortBands, projectionBands, Z90 } from './projection/
 import { superToRetirement, monthsToRetirement } from './projection/retirement'
 import { payoff, balanceAfter, homeLoanStatus, isLoanMode } from './house/homeLoan'
 import { fhssProjectionMonths } from './house/fhss'
+import { plannedSacrificeInFy, superCapLines } from './superCap'
 import { withEffect, depositHitDay, attachDepositDays } from './insights/goalImpact'
 import { fhssWindow } from './insights/rules/super'
 import { spending } from './projection/fixtures'
@@ -351,5 +352,21 @@ describe('per-person assumptions', () => {
   })
   it('FLAT fixture still has every household key', () => {
     expect(FLAT.fhss_use).toBe(0)
+  })
+})
+
+describe('super cap tracker with the plan’s salary sacrifice', () => {
+  it('counts the months still to come this FY', () => {
+    // Today 13 Nov 2026, projection from Dec: Dec–Jun = 7 months of $12,000/yr = $7,000.
+    expect(plannedSacrificeInFy($(12_000), '2026-12', '2026-11-13')).toBe($(7_000))
+    expect(plannedSacrificeInFy($(12_000), '2027-01', '2026-12-20')).toBe($(6_000))
+    // Today in June: the projection starts in July, a new FY, so nothing this FY.
+    expect(plannedSacrificeInFy($(12_000), '2027-07', '2027-06-10')).toBe(0)
+  })
+  it('reduces the room left', () => {
+    const [l] = superCapLines([{ key: 'evan', name: 'Evan', grossCents: $(135_000), hasPrivateHospital: true, hasHecs: false, plannedSacrificeCents: $(7_000) }], [], '2026-11-13')
+    // $32,500 − $16,200 SG − $7,000 planned = $9,300
+    expect(l.plannedCents).toBe($(7_000))
+    expect(l.headroomCents).toBe($(9_300))
   })
 })

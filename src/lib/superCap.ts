@@ -48,6 +48,8 @@ export type CapLine = {
   grossCents: number
   sgCents: number
   voluntaryCents: number
+  /** Salary sacrifice from Assumptions still to come this FY (Phase 5). */
+  plannedCents: number
   capCents: number
   headroomCents: number
   usedPct: number
@@ -56,7 +58,7 @@ export type CapLine = {
 }
 
 export function superCapLines(
-  people: readonly { key: string; name: string; grossCents: number; hasPrivateHospital: boolean; hasHecs: boolean }[],
+  people: readonly { key: string; name: string; grossCents: number; hasPrivateHospital: boolean; hasHecs: boolean; plannedSacrificeCents?: number }[],
   rows: readonly ConcessionalRow[],
   today: string,
 ): CapLine[] {
@@ -65,13 +67,26 @@ export function superCapLines(
     const b = annualTakeHome({ grossCents: p.grossCents, hasPrivateHospital: p.hasPrivateHospital, hasHecs: p.hasHecs }, fy)
     const entries = contributionsInFy(rows, p.key, today)
     const voluntary = entries.reduce((s, e) => s + e.cents, 0)
-    const used = b.sgCents + voluntary
+    const planned = Math.max(0, p.plannedSacrificeCents ?? 0)
+    const used = b.sgCents + voluntary + planned
     return {
-      personKey: p.key, name: p.name, fy, grossCents: p.grossCents, sgCents: b.sgCents, voluntaryCents: voluntary,
+      personKey: p.key, name: p.name, fy, grossCents: p.grossCents, sgCents: b.sgCents, voluntaryCents: voluntary, plannedCents: planned,
       capCents: b.concessionalCapCents, headroomCents: b.concessionalCapCents - used,
       usedPct: b.concessionalCapCents > 0 ? Math.round(used / b.concessionalCapCents * 100) : 0,
       daysLeft: dayDiff(today, end),
       entries: entries.map(e => ({ id: e.row.id, description: e.row.description, dates: e.dates, cents: e.cents, status: e.row.status })),
     }
   })
+}
+
+/**
+ * Salary sacrifice set in Assumptions (a yearly amount) that falls in the current FY
+ * (`today`'s), from `firstMonth` to 30 June. The projection starts next month,
+ * so the tracker counts only the months still to come.
+ */
+export function plannedSacrificeInFy(annualCents: number, firstMonth: string, today: string): number {
+  if (annualCents <= 0 || fyOf(`${firstMonth}-01`) !== fyOf(today)) return 0
+  const m = Number(firstMonth.slice(5, 7))
+  const monthsLeft = m >= 7 ? 19 - m : 7 - m
+  return Math.round(annualCents * monthsLeft / 12)
 }

@@ -14,7 +14,7 @@ import { fhssProjectionMonths, fhssTimeline } from '@/lib/house/fhss'
 import { isLoanMode } from '@/lib/house/homeLoan'
 import { detectSubscriptions, type Subscription } from '@/lib/subscriptions/detect'
 import type { SubscriptionMark } from '@/lib/subscriptions/bills'
-import { CONCESSIONAL_SOURCE, contributionsInFy, type ConcessionalRow } from '@/lib/superCap'
+import { CONCESSIONAL_SOURCE, contributionsInFy, plannedSacrificeInFy, type ConcessionalRow } from '@/lib/superCap'
 import type { BudgetRow } from '@/lib/budgets'
 import { runInsights } from './index'
 import type { Ranked } from './rank'
@@ -39,12 +39,7 @@ export type CheckinData = {
  * yearly amount for the months from the first projected month to 30 June.
  */
 export function plannedSacrificeThisFy(plan: Plan, personKey: string): number {
-  const annual = Math.round((plan.personAssumptions[personKey]?.salary_sacrifice.value ?? 0) * 100)
-  if (annual <= 0) return 0
-  const start = plan.input.startMonth
-  const m = Number(start.slice(5, 7))
-  const monthsLeft = m >= 7 ? 19 - m : 7 - m // first projected month through June
-  return Math.round(annual * monthsLeft / 12)
+  return plannedSacrificeInFy(Math.round((plan.personAssumptions[personKey]?.salary_sacrifice.value ?? 0) * 100), plan.input.startMonth, plan.input.today)
 }
 
 /** Current gross salary per person (from the plan's salary rows). */
