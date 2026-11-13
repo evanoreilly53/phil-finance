@@ -16,6 +16,8 @@ import InsightCard from '@/components/InsightCard'
 import { Caveat, Panel } from '@/components/planUi'
 import BudgetPaceList from './BudgetPaceList'
 import RestoreButton from './RestoreButton'
+import ReportButton from './ReportButton'
+import { reportMonths } from '@/lib/report/monthly'
 
 // The monthly check-in (was Insights): a ten-minute ritual on the 1st.
 // 1 clear the review queue · 2 what happened last month · 3 this month's
@@ -76,6 +78,8 @@ export default async function CheckinPage() {
         <p className="text-white text-lg font-semibold">{monthLabel(thisMonth)} check-in</p>
         <p className="text-xs text-gray-500">About ten minutes: clear the queue, see what happened, look at up to {MAX_SHOWN} things, done.</p>
       </div>
+
+      <ReportButton months={reportMonths(thisMonth)} />
 
       {/* 1. Review queue */}
       <Panel title="1 · Review queue" icon={<Inbox size={14} />}>
