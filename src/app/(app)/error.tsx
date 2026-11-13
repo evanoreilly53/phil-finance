@@ -4,10 +4,10 @@ import { useEffect } from 'react'
 
 export default function AppError({
   error,
-  unstable_retry,
+  retry,
 }: {
   error: Error & { digest?: string }
-  unstable_retry: () => void
+  retry: () => void
 }) {
   useEffect(() => {
     console.error(error)
@@ -20,7 +20,7 @@ export default function AppError({
         Some data failed to load, so nothing is shown rather than incomplete totals.
       </p>
       <button
-        onClick={() => unstable_retry()}
+        onClick={() => retry()}
         className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-5 py-2.5 rounded-xl transition-colors"
       >
         Try again
