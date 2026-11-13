@@ -5,7 +5,7 @@ import {
   CartesianGrid, ReferenceLine,
 } from 'recharts'
 import ChartTooltip from '@/components/ChartTooltip'
-import type { Milestone } from '@/lib/forecast'
+import type { Milestone } from '@/lib/networth'
 
 const CHART_GROUPS = [
   { key: 'investments', label: 'Investments', colour: '#818cf8' },

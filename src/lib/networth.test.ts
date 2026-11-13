@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildNetWorthChartData } from './networth'
+import { buildNetWorthChartData, detectMilestones } from './networth'
 
 const accounts = [
   { id: 'b', type: 'bank' },
@@ -30,5 +30,17 @@ describe('buildNetWorthChartData', () => {
   it('ignores snapshots for accounts not passed in (inactive)', () => {
     const [p] = buildNetWorthChartData([snap('2026-01-01', 'b', 1), snap('2026-01-01', 'gone', 999)], accounts)
     expect(p.total).toBe(1)
+  })
+})
+
+describe('detectMilestones', () => {
+  it('reports the first crossing of each milestone', () => {
+    const m = detectMilestones([
+      { date: '2026-01-01', total: 40_000 },
+      { date: '2026-02-01', total: 60_000 },
+      { date: '2026-03-01', total: 45_000 },
+      { date: '2026-04-01', total: 110_000 },
+    ])
+    expect(m.map(x => [x.label, x.date])).toEqual([['$50k', '2026-02-01'], ['$100k', '2026-04-01']])
   })
 })

@@ -42,3 +42,25 @@ export function buildNetWorthChartData(
     return point
   })
 }
+
+// ── Historical milestone detection (Net Worth chart pins) ─────────────────────
+
+const MILESTONES = [50_000, 100_000, 150_000, 200_000, 250_000, 500_000, 1_000_000, 2_000_000]
+
+export type Milestone = { dollars: number; label: string; date: string }
+
+/** First date each round-number net worth was crossed. chartData: `date` + `total` (dollars). */
+export function detectMilestones(chartData: Record<string, number | string>[]): Milestone[] {
+  const results: Milestone[] = []
+  for (const m of MILESTONES) {
+    for (let i = 0; i < chartData.length; i++) {
+      const total = chartData[i].total as number
+      const prev  = i > 0 ? (chartData[i - 1].total as number) : 0
+      if (total >= m && prev < m) {
+        results.push({ dollars: m, label: m >= 1_000_000 ? `$${m / 1_000_000}M` : `$${m / 1_000}k`, date: chartData[i].date as string })
+        break
+      }
+    }
+  }
+  return results
+}

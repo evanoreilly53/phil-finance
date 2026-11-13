@@ -4,14 +4,11 @@ import { useState, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { Plus, TrendingUp, TrendingDown, Zap } from 'lucide-react'
 import SnapshotModal from './SnapshotModal'
-import { fmtAUD, fmtCompact, fmtDate } from '@/lib/format'
+import { fmtAUD, fmtCompact, fmtDate, monthLabel } from '@/lib/format'
 import { Card } from '@/components/Card'
 import ChartSkeleton from '@/components/ChartSkeleton'
-import {
-  linearMonthlyGain, projectNetWorth, monthsToTarget, detectMilestones, buildMonthlyNW,
-} from '@/lib/forecast'
 import { netWorthSeries, accountDeltas, latestSnapshotByAccount } from '@/lib/balances'
-import { buildNetWorthChartData } from '@/lib/networth'
+import { buildNetWorthChartData, detectMilestones } from '@/lib/networth'
 
 const NetWorthChart = dynamic(() => import('./NetWorthChart'), {
   ssr: false,
@@ -60,13 +57,19 @@ function getLatestBalances(snapshots: Snapshot[], accounts: Account[]) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
+/** A projected month from the projection engine (dollars). */
+export type ProjectedPoint = { date: string; label: string; projected_total: number }
+
 type Props = {
   snapshots: Snapshot[]
   accounts: Account[]
   goals: Goal[]
+  projected: ProjectedPoint[]
+  /** Month the net-worth milestone goal is projected to be reached ('now' / null = not within 30 years). */
+  nwGoalHit: string | null
 }
 
-export default function NetWorthView({ snapshots, accounts, goals }: Props) {
+export default function NetWorthView({ snapshots, accounts, goals, projected, nwGoalHit }: Props) {
   const [showUpdate, setShowUpdate] = useState(false)
   const [showTotal, setShowTotal]   = useState(true)
 
@@ -97,30 +100,19 @@ export default function NetWorthView({ snapshots, accounts, goals }: Props) {
   const ultimateGoal   = goals.find(g => g.kind === 'net_worth_ultimate')
   const ultimateProgress = ultimateGoal ? Math.min(100, (totalNW / ultimateGoal.target_cents) * 100) : null
 
-  // 12.1/12.2: projection + milestone detection
-  // Slope is per calendar month (same series Goals uses), not per snapshot date
-  const slope = useMemo(
-    () => linearMonthlyGain(buildMonthlyNW(snapshots, { accountIds }).map(m => m.dollars)),
-    [snapshots, accountIds],
-  )
-
-  const projectedData = useMemo(
-    () => projectNetWorth(chartData, 12, slope),
-    [chartData, slope],
-  )
-
+  // Projection: the month-by-month engine (same numbers as the Future tab).
   // Merge: last historical point gets projected_total = total (so lines connect)
   const mergedData = useMemo(() => {
-    if (!projectedData.length) return chartData
+    if (!projected.length || !chartData.length) return chartData
     const hist = chartData.slice(0, -1)
     const bridge = { ...chartData[chartData.length - 1], projected_total: chartData[chartData.length - 1].total }
-    return [...hist, bridge, ...projectedData]
-  }, [chartData, projectedData])
+    return [...hist, bridge, ...projected]
+  }, [chartData, projected])
 
   const milestones = useMemo(() => detectMilestones(chartData), [chartData])
 
-  const monthsToNWGoal = nwGoal && slope > 0
-    ? monthsToTarget(totalNW / 100, nwGoal.target_cents / 100, slope)
+  const nwGoalProjected = nwGoal && nwGoalHit && nwGoalHit !== 'now'
+    ? monthLabel(nwGoalHit, { month: 'short', year: 'numeric' })
     : null
 
   const lastUpdated = latestBalances.length
@@ -161,10 +153,10 @@ export default function NetWorthView({ snapshots, accounts, goals }: Props) {
               </div>
               <div className="flex items-center justify-between mt-1">
                 <p className="text-xs text-gray-400">{nwGoalProgress.toFixed(1)}% · {fmtCompact(nwGoal.target_cents - totalNW)} to go</p>
-                {monthsToNWGoal !== null && (
+                {nwGoalProjected !== null && (
                   <span className="flex items-center gap-1 text-xs text-indigo-400">
                     <Zap size={10} />
-                    {monthsToNWGoal}mo at current rate
+                    projected {nwGoalProjected}
                   </span>
                 )}
               </div>

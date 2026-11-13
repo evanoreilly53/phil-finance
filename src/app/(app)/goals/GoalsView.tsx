@@ -10,7 +10,6 @@ import { fmtAUD, fmtCompact, fmtDate, daysUntilPerth, monthKey, monthLabel } fro
 import ChartTooltip from '@/components/ChartTooltip'
 import { Card } from '@/components/Card'
 import { OWNER_TEXT } from '@/lib/owners'
-import { linearMonthlyGain, monthsToTarget } from '@/lib/forecast'
 import { deleteGoal, markOutflowPaid, deletePlannedOutflow, cancelPlannedOutflow } from './actions'
 import GoalModal from './GoalModal'
 import OutflowModal from './OutflowModal'
@@ -42,6 +41,8 @@ export type Outflow = {
 const GOAL_COLOURS = ['bg-indigo-500', 'bg-pink-500', 'bg-sky-500', 'bg-purple-500', 'bg-green-500']
 
 type MonthlyNWEntry = { date: string; nw: number }
+
+export type GoalProjection = { projectedMonth: string | 'now' | null; monthsLate: number | null; extraMonthlyCents: number | null }
 
 type TrajectoryPoint = { date: string; required: number | null; actual: number | null }
 
@@ -80,13 +81,12 @@ type Props = {
   goals: Goal[]
   outflows: Outflow[]
   currentNW: number
-  monthlyNWDollars?: number[]
+  /** Projection-engine result per net-worth goal (by goal id). */
+  projections?: Record<string, GoalProjection>
   monthlyNWData?: MonthlyNWEntry[]
-  nowMs: number
 }
 
-export default function GoalsView({ goals, outflows, currentNW, monthlyNWDollars = [], monthlyNWData = [], nowMs }: Props) {
-  const nwSlope = linearMonthlyGain(monthlyNWDollars)  // monthly gain in dollars
+export default function GoalsView({ goals, outflows, currentNW, projections = {}, monthlyNWData = [] }: Props) {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Perth' }).format(new Date())
 
   const upcoming = outflows.filter(o => o.due_date >= today && o.status !== 'cancelled').slice(0, 10)
@@ -170,16 +170,15 @@ export default function GoalsView({ goals, outflows, currentNW, monthlyNWDollars
           const barColour = GOAL_COLOURS[i % GOAL_COLOURS.length]
 
           // 12.3 On-track signal for NW goals
+          // On-track from the projection engine: months late vs the goal date
+          const proj = isNWGoal ? projections[goal.id] : undefined
           let onTrack: 'green' | 'amber' | 'red' | null = null
-          let mthsRemain: number | null = null
-          if (isNWGoal && nwSlope > 0 && goal.target_date) {
-            const daysLeft = Math.ceil((new Date(goal.target_date).getTime() - nowMs) / 86_400_000)
-            const moLeft   = Math.max(1, daysLeft / 30)
-            const required = (goal.target_cents / 100 - currentNW / 100) / moLeft
-            const ratio    = nwSlope / required
-            onTrack = ratio >= 1.1 ? 'green' : ratio >= 0.75 ? 'amber' : 'red'
-            mthsRemain = monthsToTarget(currentNW / 100, goal.target_cents / 100, nwSlope)
+          if (proj && goal.target_date) {
+            onTrack = proj.monthsLate === null ? 'red' : proj.monthsLate <= 0 ? 'green' : proj.monthsLate <= 3 ? 'amber' : 'red'
           }
+          const projectedLabel = proj?.projectedMonth && proj.projectedMonth !== 'now'
+            ? monthLabel(proj.projectedMonth, { month: 'short', year: 'numeric' })
+            : null
 
           return (
             <div key={goal.id} className="bg-gray-900 rounded-2xl border border-gray-800 p-5">
@@ -238,12 +237,16 @@ export default function GoalsView({ goals, outflows, currentNW, monthlyNWDollars
                   {goal.target_date && (() => {
                     const days = daysUntilPerth(goal.target_date)
                     if (days <= 0) return <span className="text-red-400"> · overdue</span>
+                    if (proj) return null // the projection below is more accurate than a straight line
                     const perMonth = Math.ceil((goal.target_cents - current) / (days / 30))
                     return <span> · ~{fmtCompact(perMonth)}/mo needed</span>
                   })()}
-                  {mthsRemain !== null && (
-                    <span className="text-indigo-400"> · ~{mthsRemain}mo at current rate</span>
+                  {projectedLabel !== null && (
+                    <span className="text-indigo-400"> · projected {projectedLabel}</span>
                   )}
+                  {proj?.extraMonthlyCents ? (
+                    <span className="text-indigo-400"> · +{fmtCompact(proj.extraMonthlyCents)}/mo closes the gap</span>
+                  ) : null}
                 </p>
               )}
 
