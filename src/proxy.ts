@@ -28,7 +28,11 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  if (user && pathname === '/login') {
+  // Only bounce page loads (GET/HEAD) away from /login. A Server Action POST to
+  // /login (e.g. pressing "Sign in" again in a tab where the session cookie is
+  // already set) must reach the action: a 307 would re-POST the action to
+  // /dashboard, where the client can't make sense of the reply.
+  if (user && pathname === '/login' && (request.method === 'GET' || request.method === 'HEAD')) {
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
